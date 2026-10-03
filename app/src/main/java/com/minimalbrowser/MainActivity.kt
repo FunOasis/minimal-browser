@@ -2,6 +2,7 @@ package com.minimalbrowser
 
 import android.annotation.SuppressLint
 import android.os.Bundle
+import android.graphics.Bitmap
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
@@ -32,7 +33,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         prefs   = Prefs.get(this)
 
         setSupportActionBar(binding.toolbar)
-        supportActionBar?.setDisplayShowTitleEnabled(false)
+        supportActionBar?.setDisplayShowTitleEnabled(true)
 
         WebViewConfigurator.apply(binding.webView, prefs.javaScriptEnabled)
 
@@ -129,9 +130,12 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.btnForward.isEnabled = canGoForward
     }
 
-    override fun onPageLoadStarted() {
-        binding.progressBar.progress = 0
-        binding.progressBar.visibility = View.VISIBLE
+    override fun onPageLoadStarted() {    
+        binding.progressBar.progress = 0    
+        binding.progressBar.visibility = View.VISIBLE    
+        // Clear stale title from the previous page. The new title will    
+        // arrive via onReceivedTitle once the new page's <head> is parsed.    
+        supportActionBar?.title = "Loading…"
     }
 
     override fun onPageLoadFinished() {
@@ -148,6 +152,19 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             "utf-8",
             null
         )
+    }
+
+    override fun onTitleChanged(title: String) {
+    // Strip whitespace; some pages ship empty or padded <title> tags.    
+        val clean = title.trim().ifEmpty { "MinimalBrowser" }    
+        supportActionBar?.title = clean
+    }
+
+    override fun onFaviconReceived(icon: Bitmap?) {
+    // ActionBar.setLogo places the bitmap in the toolbar's leading slot
+    // (to the left of the title). Pass null to clear, which happens when
+    // a page explicitly removes its favicon.    
+        supportActionBar?.setLogo(icon)
     }
 
     // ---------------------------------------------------------------------
