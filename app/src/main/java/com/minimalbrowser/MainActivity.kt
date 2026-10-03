@@ -2,16 +2,15 @@ package com.minimalbrowser
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
-import android.graphics.drawable.BitmapDrawable
 import android.os.Bundle
 import android.view.KeyEvent
-import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.webkit.WebChromeClient
 import android.webkit.WebView
+import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
@@ -33,9 +32,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         blocker = AdBlocker.get(this)
         prefs   = Prefs.get(this)
 
-        setSupportActionBar(binding.toolbar)
-        supportActionBar?.setDisplayShowTitleEnabled(true)
-
         WebViewConfigurator.apply(binding.webView, prefs.javaScriptEnabled)
 
         binding.webView.webViewClient = BlockingWebViewClient(
@@ -52,31 +48,28 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
                 if (newProgress == 100) binding.swipeRefresh.isRefreshing = false
             }
 
-            override fun onReceivedTitle(view: WebView?, title: String?) {
-                super.onReceivedTitle(view, title)
-                val clean = title?.trim().orEmpty().ifEmpty { "MinimalBrowser" }
-                supportActionBar?.title = clean
-            }
-
             override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
                 super.onReceivedIcon(view, icon)
-                // ActionBar.setLogo takes a Drawable (or a resource id), not
-                // a Bitmap. Wrap the bitmap. Passing null clears the logo.
-                val drawable = icon?.let { BitmapDrawable(resources, it) }
-                supportActionBar?.setLogo(drawable)
+                // Favicon sits inside the URL pill, leftmost. No background.
+                if (icon == null) {
+                    binding.favicon.setImageDrawable(null)
+                    binding.favicon.visibility = View.GONE
+                } else {
+                    binding.favicon.setImageBitmap(icon)
+                    binding.favicon.visibility = View.VISIBLE
+                }
             }
         }
 
         binding.swipeRefresh.setOnRefreshListener { binding.webView.reload() }
 
-        binding.btnGo.setOnClickListener { navigate() }
         binding.btnBack.setOnClickListener {
             if (binding.webView.canGoBack()) binding.webView.goBack()
         }
         binding.btnForward.setOnClickListener {
             if (binding.webView.canGoForward()) binding.webView.goForward()
         }
-        binding.btnReload.setOnClickListener { binding.webView.reload() }
+        binding.btnMenu.setOnClickListener { showOverflowMenu(it) }
 
         binding.addressBar.setOnEditorActionListener { _, actionId, event ->
             val isGo = actionId == EditorInfo.IME_ACTION_GO ||
@@ -122,6 +115,44 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     // ---------------------------------------------------------------------
+    // Overflow menu (was: ActionBar options menu)
+    // ---------------------------------------------------------------------
+
+    private fun showOverflowMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        popup.menuInflater.inflate(R.menu.browser_menu, popup.menu)
+        popup.setOnMenuItemClickListener { item -> handleMenu(item) }
+        popup.show()
+    }
+
+    private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {
+        R.id.action_home -> {
+            val home = prefs.homepage
+            binding.webView.loadUrl(home)
+            binding.addressBar.setText(home)
+            true
+        }
+        R.id.action_js -> {
+            prefs.javaScriptEnabled = !prefs.javaScriptEnabled
+            binding.webView.settings.javaScriptEnabled = prefs.javaScriptEnabled
+            binding.webView.reload()
+            Toast.makeText(
+                this,
+                "JavaScript: ${if (prefs.javaScriptEnabled) "ON" else "OFF"}",
+                Toast.LENGTH_SHORT
+            ).show()
+            true
+        }
+        R.id.action_clear -> {
+            binding.webView.clearHistory()
+            binding.webView.clearCache(true)
+            Toast.makeText(this, "Cache cleared", Toast.LENGTH_SHORT).show()
+            true
+        }
+        else -> false
+    }
+
+    // ---------------------------------------------------------------------
     // BrowserUiListener
     // ---------------------------------------------------------------------
 
@@ -138,7 +169,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     override fun onPageLoadStarted() {
         binding.progressBar.progress = 0
         binding.progressBar.visibility = View.VISIBLE
-        supportActionBar?.title = "Loading…"
     }
 
     override fun onPageLoadFinished() {
@@ -148,12 +178,10 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     override fun onPageLoadError(description: String, url: String?) {
         binding.progressBar.visibility = View.GONE
         binding.swipeRefresh.isRefreshing = false
+        binding.favicon.setImageDrawable(null)
+        binding.favicon.visibility = View.GONE
         binding.webView.loadDataWithBaseURL(
-            null,
-            errorPageHtml(description, url),
-            "text/html",
-            "utf-8",
-            null
+            null, errorPageHtml(description, url), "text/html", "utf-8", null
         )
     }
 
@@ -178,7 +206,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     private fun normalize(input: String): String = when {
         input.startsWith("http://") || input.startsWith("https://") -> input
         input.contains(" ") || !input.contains(".") ->
-            "https://duckduckgo.com/?q=" + URLEncoder.encode(input, "UTF-8")
+            "https://search.brave.com/search?q=" + URLEncoder.encode(input, "UTF-8")
         else -> "https://$input"
     }
 
@@ -190,12 +218,12 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             <html><head>
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
-              html, body { margin: 0; padding: 0; background: #ffffff; }
+              html, body { margin: 0; padding: 0; background: #0A0A0A; }
               body { font-family: -apple-system, system-ui, sans-serif;
-                     color: #0d0d0d; padding: 64px 24px; text-align: center; }
+                     color: #FFFFFF; padding: 64px 24px; text-align: center; }
               h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
-              p  { font-size: 15px; color: #555; margin: 0 0 4px; }
-              .url { font-size: 12px; color: #999; word-break: break-all;
+              p  { font-size: 15px; color: #8A8A8A; margin: 0 0 4px; }
+              .url { font-size: 12px; color: #666666; word-break: break-all;
                      margin-top: 20px; }
             </style>
             </head><body>
@@ -204,43 +232,5 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
               <p class="url">$safeUrl</p>
             </body></html>
         """.trimIndent()
-    }
-
-    // ---------------------------------------------------------------------
-    // Menu
-    // ---------------------------------------------------------------------
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.browser_menu, menu)
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            R.id.action_home -> {
-                val home = prefs.homepage
-                binding.webView.loadUrl(home)
-                binding.addressBar.setText(home)
-                true
-            }
-            R.id.action_js -> {
-                prefs.javaScriptEnabled = !prefs.javaScriptEnabled
-                binding.webView.settings.javaScriptEnabled = prefs.javaScriptEnabled
-                binding.webView.reload()
-                Toast.makeText(
-                    this,
-                    "JavaScript: ${if (prefs.javaScriptEnabled) "ON" else "OFF"}",
-                    Toast.LENGTH_SHORT
-                ).show()
-                true
-            }
-            R.id.action_clear -> {
-                binding.webView.clearHistory()
-                binding.webView.clearCache(true)
-                Toast.makeText(this, "Cache cleared", Toast.LENGTH_SHORT).show()
-                true
-            }
-            else -> super.onOptionsItemSelected(item)
-        }
     }
 }
