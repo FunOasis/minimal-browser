@@ -6,6 +6,7 @@ import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -70,6 +71,20 @@ class MainActivity : AppCompatActivity() {
             binding.webView.loadUrl(home)
             binding.addressBar.setText(home)
         }
+    }
+
+    override fun onDestroy() {
+        // Standard leak-prevention recipe: detach the WebView from its
+        // parent ViewGroup before destroying it. Without this the WebView
+        // can survive past the Activity via internal references held by
+        // the framework's shared renderer process.
+        with(binding.webView) {
+            stopLoading()
+            (parent as? ViewGroup)?.removeView(this)
+            removeAllViews()
+            destroy()
+        }
+        super.onDestroy()
     }
 
     private fun navigate() {
