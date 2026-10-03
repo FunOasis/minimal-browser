@@ -33,14 +33,9 @@ class MainActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayShowTitleEnabled(false)
 
-        with(binding.webView.settings) {
-            javaScriptEnabled    = prefs.javaScriptEnabled
-            domStorageEnabled    = true
-            loadWithOverviewMode = true
-            useWideViewPort      = true
-            builtInZoomControls  = true
-            displayZoomControls  = false
-        }
+        // All WebView settings — including security hardening — live in one
+        // auditable place. See WebViewConfigurator.kt.
+        WebViewConfigurator.apply(binding.webView, prefs.javaScriptEnabled)
 
         binding.webView.webViewClient = BlockingWebViewClient(blocker)
 
@@ -74,10 +69,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        // Standard leak-prevention recipe: detach the WebView from its
-        // parent ViewGroup before destroying it. Without this the WebView
-        // can survive past the Activity via internal references held by
-        // the framework's shared renderer process.
         with(binding.webView) {
             stopLoading()
             (parent as? ViewGroup)?.removeView(this)
