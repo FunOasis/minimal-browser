@@ -2,7 +2,6 @@ package com.minimalbrowser
 
 import android.content.Context
 import android.util.Log
-import android.util.LruCache
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -44,7 +43,16 @@ class AdBlocker private constructor(
 
     private val blockedHosts  = ConcurrentHashMap.newKeySet<String>(50_000)
     private val urlPatterns   = ConcurrentHashMap.newKeySet<String>()
-    private val decisionCache = LruCache<String, Boolean>(CACHE_SIZE)
+
+    // -------------------------------------------------------------------
+    // Plain-JVM LRU cache.
+    //
+    // We intentionally do NOT use android.util.LruCache here because it is
+    // an Android framework class that throws "Stub!" when instantiated from
+    // a plain JVM unit test. This implementation is thread-safe, bounded,
+    // and uses access-order eviction (same semantics as LruCache).
+    // -------------------------------------------------------------------
+    private val decisionCache = SimpleLruCache<String, Boolean>(CACHE_SIZE)
 
     init {
         blockedHosts.addAll(preloadedHosts)
@@ -84,15 +92,11 @@ class AdBlocker private constructor(
     fun isBlocked(url: String): Boolean {
         if (url.isBlank()) return false
 
-        synchronized(decisionCache) {
-            decisionCache.get(url)?.let { return it }
-        }
+        decisionCache.get(url)?.let { return it }
 
         val result = check(url.lowercase())
 
-        synchronized(decisionCache) {
-            decisionCache.put(url, result)
-        }
+        decisionCache.put(url, result)
         return result
     }
 
@@ -153,4 +157,30 @@ class AdBlocker private constructor(
 
     data class Stats(val hosts: Int, val patterns: Int)
     fun stats() = Stats(blockedHosts.size, urlPatterns.size)
+
+    /**
+     * Bounded, thread-safe, access-ordered LRU map.
+     * JVM-compatible replacement for android.util.LruCache.
+     */
+    private class SimpleLruCache<K, V>(private val maxSize: Int) {
+
+        private val map = object : LinkedHashMap<K, V>(16, 0.75f, /* accessOrder = */ true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>): Boolean {
+                return size > maxSize
+            }
+        }
+
+        @Synchronized
+        fun get(key: K): V? = map[key]
+
+        @Synchronized
+        fun put(key: K, value: V) {
+            map[key] = value
+        }
+
+        @Synchronized
+        fun evictAll() {
+            map.clear()
+        }
+    }
 }
