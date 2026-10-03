@@ -15,14 +15,17 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import java.io.ByteArrayInputStream
 
+/**
+ * Callbacks the client fires at the host Activity so UI stays in sync.
+ * Title and favicon are NOT here — those come from WebChromeClient in
+ * MainActivity, since WebViewClient doesn't expose them.
+ */
 interface BrowserUiListener {
     fun onUrlChanged(url: String)
     fun onNavStateChanged(canGoBack: Boolean, canGoForward: Boolean)
     fun onPageLoadStarted()
     fun onPageLoadFinished()
     fun onPageLoadError(description: String, url: String?)
-    fun onTitleChanged(title: String)
-    fun onFaviconReceived(icon: Bitmap?)
 }
 
 class BlockingWebViewClient(
@@ -88,8 +91,6 @@ class BlockingWebViewClient(
         }
     }
 
-    // --- Lifecycle callbacks that keep the UI in sync ----------------------
-
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
         ui.onPageLoadStarted()
@@ -108,27 +109,6 @@ class BlockingWebViewClient(
         super.doUpdateVisitedHistory(view, url, isReload)
         if (url != null) ui.onUrlChanged(url)
         ui.onNavStateChanged(view?.canGoBack() == true, view?.canGoForward() == true)
-    }
-
-    /**
-     * Fires as the page's <title> element is parsed or updated. A page
-     * may fire this multiple times during load (initial title, then
-     * JS-updated title), which is expected — we just forward the latest.
-     */
-    override fun onReceivedTitle(view: WebView?, title: String?) {
-        super.onReceivedTitle(view, title)
-        if (title != null) ui.onTitleChanged(title)
-    }
-
-    /**
-     * Fires when the page's favicon is available. Not every page has one,
-     * in which case this is never called and the UI keeps whatever it
-     * was showing. When the page *clears* its favicon (rare), the OS
-     * sends null — the UI should handle that by clearing too.
-     */
-    override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
-        super.onReceivedIcon(view, icon)
-        ui.onFaviconReceived(icon)
     }
 
     override fun onReceivedError(
