@@ -1,13 +1,13 @@
 // =============================================================================
 // Signing behaviour:
-//   • If KEYSTORE_PATH + KEYSTORE_PASSWORD + KEY_ALIAS + KEY_PASSWORD are set
-//     (they are, in CI, when you've configured the four repository secrets),
-//     both debug and release APKs are signed with your permanent keystore.
-//   • If those env vars are missing (local builds without a keystore),
-//     Gradle falls back to the default debug key — fine for casual testing,
-//     but updates won't install in place.
-//   • versionCode comes from GITHUB_RUN_NUMBER so every CI run produces a
-//     higher versionCode, allowing in-place updates.
+//   • If KEYSTORE_PATH (or KEYSTORE_FILE) + KEYSTORE_PASSWORD + KEY_ALIAS +
+//     KEY_PASSWORD are all set AND the keystore file exists, both debug and
+//     release APKs are signed with the permanent keystore → in-place updates
+//     work on real devices.
+//   • Otherwise the release build type is left unsigned (debug still falls
+//     back to the default debug key), which is fine for CI smoke tests.
+//   • versionCode comes from GITHUB_RUN_NUMBER so every CI run bumps it,
+//     allowing in-place updates.
 // =============================================================================
 
 plugins {
@@ -16,20 +16,34 @@ plugins {
 }
 
 // -----------------------------------------------------------------------------
-// IMPORTANT — why these values are computed here and not inline:
-//
-// Groovy parses `versionCode (expr).toInteger()` ambiguously. It treats the
-// call as `versionCode(expr)` (which returns void in the Android DSL) followed
-// by `.toInteger()` on that void — hence "Value is null". Pre-computing the
-// values into local variables removes the ambiguity entirely.
+// Groovy parses `versionCode (expr).toInteger()` ambiguously — pre-compute.
 // -----------------------------------------------------------------------------
-def ciRunNumber        = System.getenv("GITHUB_RUN_NUMBER")
-def isNumericRunNumber = ciRunNumber != null && ciRunNumber.isInteger()
+def ciRunNumber         = System.getenv("GITHUB_RUN_NUMBER")
+def isNumericRunNumber  = ciRunNumber != null && ciRunNumber.isInteger()
 def computedVersionCode = isNumericRunNumber ? ciRunNumber.toInteger() : 1
 def computedVersionName = "1.0.${computedVersionCode}"
 
-def keystorePath        = System.getenv("KEYSTORE_PATH")
-def hasReleaseKeystore  = keystorePath != null
+// -----------------------------------------------------------------------------
+// Keystore env — accept BOTH names so this file works with either workflow
+// variant (KEYSTORE_PATH is what we read first; KEYSTORE_FILE is a fallback).
+// -----------------------------------------------------------------------------
+def envKeystorePath  = System.getenv("KEYSTORE_PATH") ?: System.getenv("KEYSTORE_FILE")
+def envStorePassword = System.getenv("KEYSTORE_PASSWORD")
+def envKeyAlias      = System.getenv("KEY_ALIAS")
+def envKeyPassword   = System.getenv("KEY_PASSWORD")
+
+def keystoreFile = envKeystorePath ? file(envKeystorePath) : null
+
+def hasReleaseKeystore =
+        keystoreFile != null &&
+        keystoreFile.exists() &&
+        envStorePassword != null && !envStorePassword.isEmpty() &&
+        envKeyAlias      != null && !envKeyAlias.isEmpty() &&
+        envKeyPassword   != null && !envKeyPassword.isEmpty()
+
+logger.lifecycle(hasReleaseKeystore
+        ? "🔐 Signing with release keystore: ${keystoreFile}"
+        : "⚠️  No release keystore found — release APK will be UNSIGNED.")
 
 android {
     namespace 'com.minimalbrowser'
@@ -50,10 +64,10 @@ android {
     signingConfigs {
         if (hasReleaseKeystore) {
             release {
-                storeFile     file(keystorePath)
-                storePassword System.getenv("KEYSTORE_PASSWORD")
-                keyAlias      System.getenv("KEY_ALIAS")
-                keyPassword   System.getenv("KEY_PASSWORD")
+                storeFile     keystoreFile
+                storePassword envStorePassword
+                keyAlias      envKeyAlias
+                keyPassword   envKeyPassword
             }
         }
     }
@@ -69,6 +83,8 @@ android {
         }
         debug {
             if (hasReleaseKeystore) {
+                // Deliberately sign debug with the release key when available,
+                // so debug ↔ release installs replace each other cleanly.
                 signingConfig signingConfigs.release
             }
             debuggable true
@@ -86,8 +102,6 @@ android {
         dataBinding false
     }
 
-    // Makes android.util.Log and friends return default values instead of
-    // throwing "Stub!" when called from pure-JVM unit tests.
     testOptions {
         unitTests.returnDefaultValues = true
     }
