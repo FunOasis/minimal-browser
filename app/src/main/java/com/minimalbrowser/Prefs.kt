@@ -30,7 +30,7 @@ class Prefs private constructor(context: Context) {
     companion object {
         private const val KEY_HOMEPAGE = "homepage"
         private const val KEY_JS       = "javascript_enabled"
-        const val DEFAULT_HOMEPAGE     = "https://duckduckgo.com/"
+        const val DEFAULT_HOMEPAGE     = "https://search.brave.com/"
 
         @Volatile private var inst: Prefs? = null
 
