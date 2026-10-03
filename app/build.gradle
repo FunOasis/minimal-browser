@@ -1,3 +1,15 @@
+// =============================================================================
+// Signing behaviour:
+//   • If KEYSTORE_PATH + KEYSTORE_PASSWORD + KEY_ALIAS + KEY_PASSWORD are set
+//     (they are, in CI, when you've configured the four repository secrets),
+//     both debug and release APKs are signed with your permanent keystore.
+//   • If those env vars are missing (local builds without a keystore),
+//     Gradle falls back to the default debug key — fine for casual testing
+//     but updates won't install in place.
+//   • versionCode comes from GITHUB_RUN_NUMBER so every CI run produces a
+//     higher versionCode, allowing in-place updates.
+// =============================================================================
+
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
@@ -11,20 +23,43 @@ android {
         applicationId "com.minimalbrowser"
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
 
-        // arm64-v8a = real phones; x86_64 = CI emulator friendly
+        // Auto-incrementing versionCode from the CI run number.
+        // Falls back to 1 for local builds with no CI context.
+        versionCode (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger()
+        versionName "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
+
         ndk { abiFilters "arm64-v8a", "x86_64" }
+    }
+
+    // --- Signing configs --------------------------------------------------
+    def hasReleaseKeystore = System.getenv("KEYSTORE_PATH") != null
+
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            release {
+                storeFile     file(System.getenv("KEYSTORE_PATH"))
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias      System.getenv("KEY_ALIAS")
+                keyPassword   System.getenv("KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
+            // Signed with the permanent keystore when available.
+            if (hasReleaseKeystore) signingConfig signingConfigs.release
+
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
+            // Also sign debug builds with the permanent keystore, so
+            // switching between debug and release builds installs in place.
+            if (hasReleaseKeystore) signingConfig signingConfigs.release
+
             debuggable true
         }
     }
@@ -33,12 +68,26 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-
     kotlinOptions { jvmTarget = '17' }
 
     buildFeatures {
         viewBinding true
         dataBinding false
+    }
+
+    // --- Unit test config -------------------------------------------------
+    // Allows Android framework classes (android.util.Log, etc.) to be called
+    // from pure-JVM unit tests without throwing "Stub!" — they just return
+    // default values. This makes our AdBlocker tests runnable without
+    // Robolectric or an emulator.
+    testOptions {
+        unitTests.returnDefaultValues = true
+        unitTests.all {
+            testLogging {
+                events "passed", "skipped", "failed"
+                showStandardStreams = true
+            }
+        }
     }
 
     lint {
