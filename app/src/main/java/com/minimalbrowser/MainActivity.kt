@@ -1,8 +1,9 @@
 package com.minimalbrowser
 
 import android.annotation.SuppressLint
-import android.os.Bundle
 import android.graphics.Bitmap
+import android.graphics.drawable.BitmapDrawable
+import android.os.Bundle
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
@@ -50,6 +51,20 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
                     if (newProgress in 1..99) View.VISIBLE else View.GONE
                 if (newProgress == 100) binding.swipeRefresh.isRefreshing = false
             }
+
+            override fun onReceivedTitle(view: WebView?, title: String?) {
+                super.onReceivedTitle(view, title)
+                val clean = title?.trim().orEmpty().ifEmpty { "MinimalBrowser" }
+                supportActionBar?.title = clean
+            }
+
+            override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
+                super.onReceivedIcon(view, icon)
+                // ActionBar.setLogo takes a Drawable (or a resource id), not
+                // a Bitmap. Wrap the bitmap. Passing null clears the logo.
+                val drawable = icon?.let { BitmapDrawable(resources, it) }
+                supportActionBar?.setLogo(drawable)
+            }
         }
 
         binding.swipeRefresh.setOnRefreshListener { binding.webView.reload() }
@@ -69,23 +84,17 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             if (isGo) { navigate(); true } else false
         }
 
-        // --- Hardware / gesture back → history back, else exit -----------
-        // Precedence matches every other Android browser: back navigates,
-        // only exits at the root of history.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (binding.webView.canGoBack()) {
                     binding.webView.goBack()
                 } else {
-                    // Disable this callback so the framework handles exit
-                    // normally (finish + system animation).
                     isEnabled = false
                     onBackPressedDispatcher.onBackPressed()
                 }
             }
         })
 
-        // --- Restore after process death (background kill) ---------------
         if (savedInstanceState != null) {
             binding.webView.restoreState(savedInstanceState)
         } else {
@@ -99,8 +108,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        // Preserves back/forward stack and scroll position across process
-        // death, not just rotation. configChanges handles rotation.
         binding.webView.saveState(outState)
     }
 
@@ -115,12 +122,10 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     // ---------------------------------------------------------------------
-    // BrowserUiListener — called from BlockingWebViewClient on the main
-    // thread (all WebViewClient callbacks fire on main).
+    // BrowserUiListener
     // ---------------------------------------------------------------------
 
     override fun onUrlChanged(url: String) {
-        // Don't stomp on the user while they're editing the address bar.
         if (binding.addressBar.hasFocus()) return
         binding.addressBar.setText(url)
     }
@@ -130,11 +135,9 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.btnForward.isEnabled = canGoForward
     }
 
-    override fun onPageLoadStarted() {    
-        binding.progressBar.progress = 0    
-        binding.progressBar.visibility = View.VISIBLE    
-        // Clear stale title from the previous page. The new title will    
-        // arrive via onReceivedTitle once the new page's <head> is parsed.    
+    override fun onPageLoadStarted() {
+        binding.progressBar.progress = 0
+        binding.progressBar.visibility = View.VISIBLE
         supportActionBar?.title = "Loading…"
     }
 
@@ -152,19 +155,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             "utf-8",
             null
         )
-    }
-
-    override fun onTitleChanged(title: String) {
-    // Strip whitespace; some pages ship empty or padded <title> tags.    
-        val clean = title.trim().ifEmpty { "MinimalBrowser" }    
-        supportActionBar?.title = clean
-    }
-
-    override fun onFaviconReceived(icon: Bitmap?) {
-    // ActionBar.setLogo places the bitmap in the toolbar's leading slot
-    // (to the left of the title). Pass null to clear, which happens when
-    // a page explicitly removes its favicon.    
-        supportActionBar?.setLogo(icon)
     }
 
     // ---------------------------------------------------------------------
@@ -192,7 +182,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         else -> "https://$input"
     }
 
-    /** Minimal, self-contained error page. No external CSS/JS — just inline. */
     private fun errorPageHtml(description: String, url: String?): String {
         val safeDesc = description.replace("<", "&lt;").replace("&", "&amp;")
         val safeUrl  = (url ?: "").replace("<", "&lt;").replace("&", "&amp;")
