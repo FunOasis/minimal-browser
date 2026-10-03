@@ -1,0 +1,45 @@
+# Gradle
+.gradle/
+build/
+app/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android
+*.apk
+*.aar
+*.ap_
+*.dex
+*.class
+output.json
+captures/
+
+# Local configuration
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Native
+.externalNativeBuild/
+.cxx/
+
+# Logs
+*.log
+
+# Keystores
+*.jks
+*.keystore
+
+# Backups
+*.bak
+*.orig
+*.rej
