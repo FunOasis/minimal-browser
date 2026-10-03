@@ -9,4 +9,7 @@
     <color name="text_primary">#FFFFFF</color>
     <color name="text_secondary">#8A8A8A</color>
     <color name="accent">#4D6BFE</color>
+
+    <!-- Adaptive launcher icon background (required by mipmap-anydpi-v26/ic_launcher.xml) -->
+    <color name="ic_launcher_background">#0A0A0A</color>
 </resources>
