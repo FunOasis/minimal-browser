@@ -4,7 +4,7 @@
 //     (they are, in CI, when you've configured the four repository secrets),
 //     both debug and release APKs are signed with your permanent keystore.
 //   • If those env vars are missing (local builds without a keystore),
-//     Gradle falls back to the default debug key — fine for casual testing
+//     Gradle falls back to the default debug key — fine for casual testing,
 //     but updates won't install in place.
 //   • versionCode comes from GITHUB_RUN_NUMBER so every CI run produces a
 //     higher versionCode, allowing in-place updates.
@@ -15,6 +15,22 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// -----------------------------------------------------------------------------
+// IMPORTANT — why these values are computed here and not inline:
+//
+// Groovy parses `versionCode (expr).toInteger()` ambiguously. It treats the
+// call as `versionCode(expr)` (which returns void in the Android DSL) followed
+// by `.toInteger()` on that void — hence "Value is null". Pre-computing the
+// values into local variables removes the ambiguity entirely.
+// -----------------------------------------------------------------------------
+def ciRunNumber        = System.getenv("GITHUB_RUN_NUMBER")
+def isNumericRunNumber = ciRunNumber != null && ciRunNumber.isInteger()
+def computedVersionCode = isNumericRunNumber ? ciRunNumber.toInteger() : 1
+def computedVersionName = "1.0.${computedVersionCode}"
+
+def keystorePath        = System.getenv("KEYSTORE_PATH")
+def hasReleaseKeystore  = keystorePath != null
+
 android {
     namespace 'com.minimalbrowser'
     compileSdk 34
@@ -24,21 +40,17 @@ android {
         minSdk 26
         targetSdk 34
 
-        // Auto-incrementing versionCode from the CI run number.
-        // Falls back to 1 for local builds with no CI context.
-        versionCode (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger()
-        versionName "1.0.${System.getenv("GITHUB_RUN_NUMBER") ?: "0"}"
+        versionCode computedVersionCode
+        versionName computedVersionName
 
         ndk { abiFilters "arm64-v8a", "x86_64" }
     }
 
     // --- Signing configs --------------------------------------------------
-    def hasReleaseKeystore = System.getenv("KEYSTORE_PATH") != null
-
     signingConfigs {
         if (hasReleaseKeystore) {
             release {
-                storeFile     file(System.getenv("KEYSTORE_PATH"))
+                storeFile     file(keystorePath)
                 storePassword System.getenv("KEYSTORE_PASSWORD")
                 keyAlias      System.getenv("KEY_ALIAS")
                 keyPassword   System.getenv("KEY_PASSWORD")
@@ -48,18 +60,17 @@ android {
 
     buildTypes {
         release {
-            // Signed with the permanent keystore when available.
-            if (hasReleaseKeystore) signingConfig signingConfigs.release
-
+            if (hasReleaseKeystore) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
-            // Also sign debug builds with the permanent keystore, so
-            // switching between debug and release builds installs in place.
-            if (hasReleaseKeystore) signingConfig signingConfigs.release
-
+            if (hasReleaseKeystore) {
+                signingConfig signingConfigs.release
+            }
             debuggable true
         }
     }
@@ -75,19 +86,10 @@ android {
         dataBinding false
     }
 
-    // --- Unit test config -------------------------------------------------
-    // Allows Android framework classes (android.util.Log, etc.) to be called
-    // from pure-JVM unit tests without throwing "Stub!" — they just return
-    // default values. This makes our AdBlocker tests runnable without
-    // Robolectric or an emulator.
+    // Makes android.util.Log and friends return default values instead of
+    // throwing "Stub!" when called from pure-JVM unit tests.
     testOptions {
         unitTests.returnDefaultValues = true
-        unitTests.all {
-            testLogging {
-                events "passed", "skipped", "failed"
-                showStandardStreams = true
-            }
-        }
     }
 
     lint {
