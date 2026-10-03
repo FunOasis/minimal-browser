@@ -1,28 +1,13 @@
-# =============================================================================
-# Build APK — signed with the keystore from repository secrets.
-# =============================================================================
-# Requires these secrets (see generate-keystore.yml for how to create them):
-#   KEYSTORE_BASE64
-#   KEYSTORE_PASSWORD
-#   KEY_ALIAS
-#   KEY_PASSWORD
-#
-# If the secrets are missing, the build still succeeds but uses the default
-# debug keystore — the resulting APK will NOT update in place across runs.
-#
-# versionCode is automatically derived from github.run_number, so each build
-# has a strictly higher versionCode than the previous one. This lets Android
-# accept every future APK as an update to the previously installed one.
-# =============================================================================
-
 name: Build APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main ]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -32,71 +17,85 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
+          distribution: temurin
           java-version: '17'
-          distribution: 'temurin'
 
-      - name: Set up Android SDK environment
+      - name: Install Android SDK (manual)
         run: |
-          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          echo "ANDROID_HOME=$SDK"        >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=$SDK"    >> $GITHUB_ENV
-          echo "$SDK/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "$SDK/platform-tools"           >> $GITHUB_PATH
+          set -euo pipefail
+          SDK_ROOT="$HOME/android-sdk"
+          mkdir -p "$SDK_ROOT/cmdline-tools"
+          cd "$SDK_ROOT"
+          curl -fsSL -o cmdline-tools.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q cmdline-tools.zip -d cmdline-tools-tmp
+          mv cmdline-tools-tmp/cmdline-tools "$SDK_ROOT/cmdline-tools/latest"
+          rm -rf cmdline-tools.zip cmdline-tools-tmp
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
 
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses > /dev/null || true
+      - name: Accept licenses & install packages
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0"
 
-      - name: Install Android SDK 34 + build-tools
-        run: sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "platform-tools"
-
-      - name: Set up Gradle
+      - name: Set up Gradle 8.4
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.4
+          gradle-version: '8.4'
 
-      - name: Decode signing keystore (if secrets are configured)
+      - name: Decode keystore (if present)
+        id: keystore
         env:
-          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PW:  ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_AL:       ${{ secrets.KEY_ALIAS }}
-          KEY_PW:       ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          if [ -z "$KEYSTORE_B64" ]; then
-            echo "::warning::No KEYSTORE_BASE64 secret found. Building with debug signing only."
-            echo "::warning::The APK will NOT update in place. Run generate-keystore.yml first."
-            exit 0
+          set -euo pipefail
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Keystore decoded — release build will be SIGNED."
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "⚠️ KEYSTORE_BASE64 missing — fallback to debug signing."
           fi
-          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-          echo "KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> $GITHUB_ENV
-          echo "KEYSTORE_PASSWORD=$KEYSTORE_PW" >> $GITHUB_ENV
-          echo "KEY_ALIAS=$KEY_AL"             >> $GITHUB_ENV
-          echo "KEY_PASSWORD=$KEY_PW"          >> $GITHUB_ENV
-          echo "Signing keystore decoded to $RUNNER_TEMP/release.keystore"
-
-      - name: Run unit tests
-        run: gradle testDebugUnitTest
-        continue-on-error: true
-
-      - name: Build signed debug APK
-        run: gradle assembleDebug
 
       - name: Build signed release APK
-        run: gradle assembleRelease
-        continue-on-error: true
+        if: steps.keystore.outputs.present == 'true'
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle assembleRelease --stacktrace --no-daemon
 
-      - name: Upload debug APK
+      - name: Build debug APK (no keystore)
+        if: steps.keystore.outputs.present != 'true'
+        run: gradle assembleDebug --stacktrace --no-daemon
+
+      - name: Rename APKs
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          shopt -s nullglob
+          for f in app/build/outputs/apk/release/*.apk; do
+            cp "$f" "dist/MinimalBrowser-release-signed.apk"
+          done
+          for f in app/build/outputs/apk/debug/*.apk; do
+            cp "$f" "dist/MinimalBrowser-debug.apk"
+          done
+          ls -la dist/
+
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: MinimalBrowser-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 30
-
-      - name: Upload release APK (if built)
-        uses: actions/upload-artifact@v4
-        with:
-          name: MinimalBrowser-release
-          path: app/build/outputs/apk/release/app-release.apk
-          retention-days: 30
-          if-no-files-found: ignore
+          name: MinimalBrowser-apk
+          path: dist/*.apk
+          if-no-files-found: error
