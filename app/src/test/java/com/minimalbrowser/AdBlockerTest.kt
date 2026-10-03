@@ -59,4 +59,16 @@ class AdBlockerTest {
         assertTrue(blocker.isBlocked(url))
         assertTrue(blocker.isBlocked(url))
     }
+
+    // --- trie-specific cases -------------------------------------------------
+
+    @Test fun deepSubdomainStillBlocked() {
+        assertTrue(blocker.isBlocked("https://x.y.z.ads.example.com/pixel"))
+    }
+
+    @Test fun labelPrefixDoesNotMatch() {
+        // "myads" is a different label from "ads" — must not match the
+        // rule "ads.example.com".
+        assertFalse(blocker.isBlocked("https://myads.example.com/"))
+    }
 }
