@@ -1,10 +1,43 @@
 name: Build APK
 
+# ---------------------------------------------------------------------------
+# Trigger policy
+#   • push to main/master: runs, EXCEPT when only docs/metadata changed.
+#   • pull_request:        runs, with the same doc-only exclusion.
+#   • workflow_dispatch:   always runs (manual "Run workflow" always works,
+#                          regardless of paths-ignore).
+#
+# When you edit build.yml itself, the push trigger still fires one run
+# (the old file was active when you hit commit). That's expected.
+# ---------------------------------------------------------------------------
 on:
   push:
     branches: [ main, master ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'docs/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'docs/**'
   workflow_dispatch:
+
+# ---------------------------------------------------------------------------
+# Concurrency
+#   Only one run per branch (per workflow) is allowed at a time. When a new
+#   run starts on the same ref, any in-flight run for that ref is cancelled.
+#   This is what stops the "7 queued runs from 7 quick commits" pile-up —
+#   the six oldest get cancelled the moment the newest is scheduled.
+# ---------------------------------------------------------------------------
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
