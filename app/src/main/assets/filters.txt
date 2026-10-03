@@ -1,0 +1,15 @@
+# URL keyword patterns — a request is blocked if its URL contains one of these
+# Lines starting with # or ! are ignored.
+/ads/
+/adserver/
+/adservice/
+/analytics/
+/pagead/
+/doubleclick/
+/googleads/
+/tracking/
+/tracker/
+/pixel.gif
+/beacon?
+/banner_ad/
+/popunder/
