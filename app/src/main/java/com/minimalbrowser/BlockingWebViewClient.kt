@@ -1,5 +1,8 @@
 package com.minimalbrowser
 
+import android.net.http.SslError
+import android.util.Log
+import android.webkit.SslErrorHandler
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -9,15 +12,9 @@ import java.io.ByteArrayInputStream
 class BlockingWebViewClient(private val blocker: AdBlocker) : WebViewClient() {
 
     companion object {
+        private const val TAG = "BlockingWebViewClient"
         private val EMPTY_BODY = ByteArray(0)
 
-        /**
-         * 204 No Content tells the renderer "nothing to display" without
-         * firing an error handler. We build a fresh response per call —
-         * the stream position on a shared instance would be exhausted
-         * after the first read, and this allocation is trivial next to
-         * the URL parse that already happened upstream.
-         */
         private fun blockedResponse(): WebResourceResponse = WebResourceResponse(
             "text/plain",
             "utf-8",
@@ -39,5 +36,19 @@ class BlockingWebViewClient(private val blocker: AdBlocker) : WebViewClient() {
 
         val url = request.url.toString()
         return if (blocker.isBlocked(url)) blockedResponse() else null
+    }
+
+    /**
+     * Never proceed past an SSL error. The default WebView behaviour is
+     * to cancel already, but making it explicit protects against future
+     * edits and documents the decision for anyone reading this file.
+     */
+    override fun onReceivedSslError(
+        view: WebView?,
+        handler: SslErrorHandler,
+        error: SslError?
+    ) {
+        Log.w(TAG, "SSL error, refusing to proceed: ${error?.primaryError}")
+        handler.cancel()
     }
 }
