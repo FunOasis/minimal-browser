@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Dark glass palette ------------------------------------------------>
-    <color name="window_bg">#0A0A0A</color>          <!-- near-black canvas -->
-    <color name="urlbar_fill_top">#2AFFFFFF</color>  <!-- ~16% white -->
-    <color name="urlbar_fill_bottom">#1AFFFFFF</color> <!-- ~10% white -->
-    <color name="urlbar_border">#33FFFFFF</color>    <!-- ~20% white rim -->
+    <!-- Dark glass palette -->
+    <color name="window_bg">#0A0A0A</color>
+    <color name="urlbar_fill_top">#2AFFFFFF</color>
+    <color name="urlbar_fill_bottom">#1AFFFFFF</color>
+    <color name="urlbar_border">#33FFFFFF</color>
     <color name="icon_primary">#E6E6E6</color>
     <color name="text_primary">#FFFFFF</color>
     <color name="text_secondary">#8A8A8A</color>
-    <color name="accent">#4D6BFE</color>             <!-- soft blue -->
+    <color name="accent">#4D6BFE</color>
 </resources>
