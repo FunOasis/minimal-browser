@@ -1,3 +1,20 @@
+# =============================================================================
+# Build APK — signed with the keystore from repository secrets.
+# =============================================================================
+# Requires these secrets (see generate-keystore.yml for how to create them):
+#   KEYSTORE_BASE64
+#   KEYSTORE_PASSWORD
+#   KEY_ALIAS
+#   KEY_PASSWORD
+#
+# If the secrets are missing, the build still succeeds but uses the default
+# debug keystore — the resulting APK will NOT update in place across runs.
+#
+# versionCode is automatically derived from github.run_number, so each build
+# has a strictly higher versionCode than the previous one. This lets Android
+# accept every future APK as an update to the previously installed one.
+# =============================================================================
+
 name: Build APK
 
 on:
@@ -39,14 +56,33 @@ jobs:
         with:
           gradle-version: 8.4
 
+      - name: Decode signing keystore (if secrets are configured)
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PW:  ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_AL:       ${{ secrets.KEY_ALIAS }}
+          KEY_PW:       ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::warning::No KEYSTORE_BASE64 secret found. Building with debug signing only."
+            echo "::warning::The APK will NOT update in place. Run generate-keystore.yml first."
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> $GITHUB_ENV
+          echo "KEYSTORE_PASSWORD=$KEYSTORE_PW" >> $GITHUB_ENV
+          echo "KEY_ALIAS=$KEY_AL"             >> $GITHUB_ENV
+          echo "KEY_PASSWORD=$KEY_PW"          >> $GITHUB_ENV
+          echo "Signing keystore decoded to $RUNNER_TEMP/release.keystore"
+
       - name: Run unit tests
         run: gradle testDebugUnitTest
         continue-on-error: true
 
-      - name: Build debug APK
+      - name: Build signed debug APK
         run: gradle assembleDebug
 
-      - name: Build release APK (R8 smoke test)
+      - name: Build signed release APK
         run: gradle assembleRelease
         continue-on-error: true
 
@@ -56,3 +92,11 @@ jobs:
           name: MinimalBrowser-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+
+      - name: Upload release APK (if built)
+        uses: actions/upload-artifact@v4
+        with:
+          name: MinimalBrowser-release
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+          if-no-files-found: ignore
