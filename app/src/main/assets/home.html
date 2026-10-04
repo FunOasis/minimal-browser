@@ -24,22 +24,20 @@
     align-items: center;
     justify-content: center;
     min-height: 100vh;
-    padding: 32px 24px 56px;
+    padding: 32px 24px;
   }
 
-  /* ---- Brand monogram -------------------------------------------- */
   .brand {
     font-size: 15px;
     font-weight: 600;
     letter-spacing: 0.42em;
     color: var(--text-2);
     margin-bottom: 44px;
-    padding-left: 0.42em; /* compensate trailing spacing */
+    padding-left: 0.42em;
     user-select: none;
   }
   .brand .dot { color: var(--accent); }
 
-  /* ---- Search pill — visually echoes the app's URL bar ---------- */
   .search-wrap {
     width: 100%;
     max-width: 480px;
@@ -73,24 +71,11 @@
   }
   .search-btn:active { background: rgba(255,255,255,0.06); }
   .search-btn svg { width: 20px; height: 20px; }
-
-  /* ---- Footer ---------------------------------------------------- */
-  footer {
-    position: fixed;
-    bottom: 18px;
-    left: 0; right: 0;
-    text-align: center;
-    font-size: 10px;
-    letter-spacing: 0.32em;
-    color: #2E2E2E;
-    user-select: none;
-    pointer-events: none;
-  }
 </style>
 </head>
 <body>
 
-  <div class="brand">M<span class="dot">·</span>B</div>
+  <div class="brand">M<span class="dot">&middot;</span>B</div>
 
   <div class="search-wrap">
     <form id="sform" action="https://search.brave.com/search" method="get" autocomplete="off">
@@ -113,8 +98,6 @@
       </button>
     </form>
   </div>
-
-  <footer>MINIMAL BROWSER</footer>
 
   <script>
     document.getElementById('sform').addEventListener('submit', function (e) {
