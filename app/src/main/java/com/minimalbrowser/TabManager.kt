@@ -59,6 +59,7 @@ class TabManager(
             syncVisibility()
             ui.onUrlChanged(wv, url)
             ui.onNavStateChanged(wv, false, false)
+            onFavicon(tab.favicon)
             wv.loadUrl(url)
         } else {
             wv.visibility = View.GONE
@@ -151,6 +152,7 @@ class TabManager(
         val url = wv.url ?: tab.url
         ui.onUrlChanged(wv, url)
         ui.onNavStateChanged(wv, wv.canGoBack(), wv.canGoForward())
+        onFavicon(tab.favicon)
     }
 
     private fun buildWebView(tab: Tab): WebView {
