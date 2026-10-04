@@ -3,6 +3,7 @@
     android:layout_width="0dp"
     android:layout_height="110dp"
     android:layout_margin="4dp"
+    android:layout_weight="1"
     android:background="@drawable/bg_tab_card"
     android:clickable="true"
     android:focusable="true">
@@ -50,7 +51,6 @@
             android:textSize="10sp" />
     </LinearLayout>
 
-    <!-- Number badge, bottom-left -->
     <TextView
         android:id="@+id/tabNumber"
         android:layout_width="wrap_content"
@@ -66,7 +66,6 @@
         android:textSize="10sp"
         android:textStyle="bold" />
 
-    <!-- Close X, top-right -->
     <ImageButton
         android:id="@+id/closeTab"
         android:layout_width="28dp"
