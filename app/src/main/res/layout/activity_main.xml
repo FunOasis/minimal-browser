@@ -9,10 +9,6 @@
     android:fitsSystemWindows="true"
     tools:context=".MainActivity">
 
-    <!-- Top bar: [back] [forward] [ URL pill: favicon | text ] [menu]
-         The menu button sits OUTSIDE the pill, flush against the right
-         edge of the bar. Same visual position as before, but its
-         ripple / touch target no longer belongs to the URL pill. -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
@@ -30,15 +26,31 @@
             android:src="@drawable/ic_arrow_back"
             android:contentDescription="@string/cd_back" />
 
+        <TextView
+            android:id="@+id/tabBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginStart="2dp"
+            android:layout_marginEnd="2dp"
+            android:background="@drawable/bg_tab_badge"
+            android:gravity="center"
+            android:minWidth="32dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:textColor="@color/text_primary"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:clickable="true"
+            android:focusable="true"
+            android:contentDescription="@string/cd_tabs"
+            tools:text="3" />
+
         <ImageButton
             android:id="@+id/btnForward"
             style="@style/Widget.MinimalBrowser.IconButton"
             android:src="@drawable/ic_arrow_forward"
             android:contentDescription="@string/cd_forward" />
 
-        <!-- URL pill: favicon + editable text only.
-             `addStatesFromChildren` makes this wrapper inherit the
-             EditText's focused state so the border can swap to accent. -->
         <LinearLayout
             android:id="@+id/urlPill"
             android:layout_width="0dp"
@@ -88,9 +100,6 @@
             android:contentDescription="@string/cd_menu" />
     </LinearLayout>
 
-    <!-- M3 LinearProgressIndicator: thinner, rounded, animates smoothly.
-         Same @+id/progressBar so no Kotlin changes needed — it extends
-         ProgressBar. -->
     <com.google.android.material.progressindicator.LinearProgressIndicator
         android:id="@+id/progressBar"
         android:layout_width="match_parent"
@@ -108,11 +117,20 @@
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <WebView
-            android:id="@+id/webView"
+        <FrameLayout
+            android:id="@+id/webViewContainer"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="@color/window_bg" />
+            android:layout_height="match_parent" />
     </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
+    <TextView
+        android:id="@+id/footerText"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/footer_height"
+        android:gravity="center"
+        android:letterSpacing="0.32"
+        android:text="@string/footer_brand"
+        android:textColor="@color/footer_text"
+        android:textSize="10sp"
+        android:importantForAccessibility="no" />
 </LinearLayout>
