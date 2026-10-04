@@ -9,7 +9,10 @@
     android:fitsSystemWindows="true"
     tools:context=".MainActivity">
 
-    <!-- Top bar: [back] [forward] [ URL pill: favicon | text | menu ] -->
+    <!-- Top bar: [back] [forward] [ URL pill: favicon | text ] [menu]
+         The menu button sits OUTSIDE the pill, flush against the right
+         edge of the bar. Same visual position as before, but its
+         ripple / touch target no longer belongs to the URL pill. -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
@@ -33,10 +36,9 @@
             android:src="@drawable/ic_arrow_forward"
             android:contentDescription="@string/cd_forward" />
 
-        <!-- URL pill.
+        <!-- URL pill: favicon + editable text only.
              `addStatesFromChildren` makes this wrapper inherit the
-             EditText's focused state, so bg_urlbar's selector can
-             swap the border colour without any Kotlin glue. -->
+             EditText's focused state so the border can swap to accent. -->
         <LinearLayout
             android:id="@+id/urlPill"
             android:layout_width="0dp"
@@ -48,7 +50,7 @@
             android:background="@drawable/bg_urlbar"
             android:addStatesFromChildren="true"
             android:paddingStart="@dimen/urlbar_padding_start"
-            android:paddingEnd="@dimen/urlbar_padding_end">
+            android:paddingEnd="@dimen/urlbar_padding_start">
 
             <ImageView
                 android:id="@+id/favicon"
@@ -70,23 +72,25 @@
                 android:imeOptions="actionGo"
                 android:inputType="textUri"
                 android:maxLines="1"
+                android:selectAllOnFocus="true"
                 android:singleLine="true"
                 android:textColor="@color/text_primary"
                 android:textColorHint="@color/text_tertiary"
                 android:textSize="@dimen/text_urlbar"
                 android:importantForAutofill="no" />
-
-            <ImageButton
-                android:id="@+id/btnMenu"
-                style="@style/Widget.MinimalBrowser.IconButton"
-                android:src="@drawable/ic_menu"
-                android:contentDescription="@string/cd_menu" />
         </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/btnMenu"
+            style="@style/Widget.MinimalBrowser.IconButton"
+            android:layout_marginStart="4dp"
+            android:src="@drawable/ic_menu"
+            android:contentDescription="@string/cd_menu" />
     </LinearLayout>
 
     <!-- M3 LinearProgressIndicator: thinner, rounded, animates smoothly.
-         Same @+id/progressBar so MainActivity.kt needs no changes —
-         LinearProgressIndicator extends ProgressBar. -->
+         Same @+id/progressBar so no Kotlin changes needed — it extends
+         ProgressBar. -->
     <com.google.android.material.progressindicator.LinearProgressIndicator
         android:id="@+id/progressBar"
         android:layout_width="match_parent"
