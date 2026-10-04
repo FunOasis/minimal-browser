@@ -19,7 +19,21 @@ class AdBlocker private constructor(
 
     companion object {
         private const val TAG        = "AdBlocker"
-        private const val CACHE_SIZE = 4_000
+
+        /**
+         * 8k entries @ ~150 bytes/key ≈ 1.2 MB of RAM. Waaaaay more than
+         * enough for a typical browsing session, and the eviction path
+         * only fires under sustained heavy browsing.
+         */
+        private const val CACHE_SIZE = 8_000
+
+        /**
+         * Compiled once. Kotlin's `String.split(regex: String)` does NOT
+         * cache the compiled pattern, so building it inline per blocklist
+         * line would recompile ~50,000 times at boot. Hoisted here, we
+         * compile it exactly once.
+         */
+        private val WHITESPACE = Regex("\\s+")
 
         @Volatile private var instance: AdBlocker? = null
 
@@ -43,15 +57,6 @@ class AdBlocker private constructor(
 
     // -------------------------------------------------------------------
     // Host matcher: reverse-label suffix trie.
-    //
-    // Rule "doubleclick.net" blocks the host "doubleclick.net" and any
-    // subdomain of it. With a flat HashSet this requires walking every
-    // dotted suffix of the query host and doing a set lookup per suffix —
-    // fine for a few thousand rules, painful for 50k+ on ad-heavy pages
-    // where every subresource fires shouldInterceptRequest.
-    //
-    // The trie is built once (background thread at boot, or synchronously
-    // in tests) and never mutated after publication. Reads are lock-free.
     // -------------------------------------------------------------------
     private class SuffixTrie {
         private class Node {
@@ -87,10 +92,7 @@ class AdBlocker private constructor(
 
     // -------------------------------------------------------------------
     // Plain-JVM LRU cache.
-    //
     // android.util.LruCache throws "Stub!" under plain JVM unit tests.
-    // This is thread-safe, bounded, and uses access-order eviction (same
-    // semantics as LruCache).
     // -------------------------------------------------------------------
     private val decisionCache = SimpleLruCache<String, Boolean>(CACHE_SIZE)
 
@@ -142,7 +144,8 @@ class AdBlocker private constructor(
         readAssetLines(ctx, "blocklist.txt") { line ->
             val t = line.trim()
             if (t.isNotEmpty() && !t.startsWith('#') && !t.startsWith('!')) {
-                val parts = t.split("\\s+".toRegex())
+                // Hoisted WHITESPACE regex — see companion.
+                val parts = t.split(WHITESPACE)
                 val host  = if (parts.size >= 2) parts[1] else parts[0]
                 if (host.isNotBlank() && host != "0.0.0.0" && host != "127.0.0.1") {
                     hosts.add(host.lowercase())
