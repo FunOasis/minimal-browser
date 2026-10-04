@@ -43,4 +43,33 @@
         <item name="android:tint">@color/icon_tint</item>
     </style>
 
+    <!-- ============================================================
+         Popup menu style — glass card, rounded corners, no icons.
+         Applied via ContextThemeWrapper in MainActivity so the
+         framework popup honours our drawable.
+         ============================================================ -->
+    <style name="Widget.MinimalBrowser.PopupMenu" parent="Widget.AppCompat.PopupMenu">
+        <item name="android:popupBackground">@drawable/bg_popup_glass</item>
+        <item name="android:popupElevation">10dp</item>
+        <item name="android:popupAnimationStyle">@android:style/Animation.DropDownPopupWindow</item>
+    </style>
+
+    <style name="ThemeOverlay.MinimalBrowser.PopupMenu" parent="ThemeOverlay.AppCompat.Dark">
+        <item name="android:popupMenuStyle">@style/Widget.MinimalBrowser.PopupMenu</item>
+        <item name="popupMenuStyle">@style/Widget.MinimalBrowser.PopupMenu</item>
+        <item name="android:popupBackground">@drawable/bg_popup_glass</item>
+
+        <!-- Text / state colours inside the popup -->
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textColorHint">@color/text_secondary</item>
+        <item name="colorAccent">@color/accent</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorControlHighlight">@color/ripple_light</item>
+        <item name="colorControlHighlight">@color/ripple_light</item>
+
+        <!-- Kill the icon gutter so text starts flush left -->
+        <item name="android:itemPadding">12dp</item>
+    </style>
+
 </resources>
