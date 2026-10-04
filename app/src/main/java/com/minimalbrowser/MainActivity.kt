@@ -50,7 +50,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
             override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
                 super.onReceivedIcon(view, icon)
-                // Favicon sits inside the URL pill, leftmost. No background.
                 if (icon == null) {
                     binding.favicon.setImageDrawable(null)
                     binding.favicon.visibility = View.GONE
@@ -77,10 +76,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             if (isGo) { navigate(); true } else false
         }
 
-        // Tap-to-select: when the address bar gains focus, select the
-        // whole URL so the user can immediately type a replacement —
-        // no manual clearing needed. post{} runs our selectAll after
-        // the tap's own cursor placement, so the selection wins.
         binding.addressBar.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 binding.addressBar.post { binding.addressBar.selectAll() }
@@ -135,6 +130,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {
         R.id.action_home -> { loadHome(); true }
+
         R.id.action_js -> {
             prefs.javaScriptEnabled = !prefs.javaScriptEnabled
             binding.webView.settings.javaScriptEnabled = prefs.javaScriptEnabled
@@ -146,12 +142,14 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             ).show()
             true
         }
+
         R.id.action_clear -> {
             binding.webView.clearHistory()
             binding.webView.clearCache(true)
             Toast.makeText(this, "Cache cleared", Toast.LENGTH_SHORT).show()
             true
         }
+
         else -> false
     }
 
@@ -188,6 +186,16 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         )
     }
 
+    /**
+     * Renderer crashed. The old WebView has already been detached and
+     * destroyed by BlockingWebViewClient — we just need to spin the whole
+     * Activity back up with a fresh WebView.
+     */
+    override fun onRenderProcessGone() {
+        Toast.makeText(this, "Renderer crashed — restarting", Toast.LENGTH_SHORT).show()
+        recreate()
+    }
+
     // ---------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------
@@ -197,17 +205,11 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.btnForward.isEnabled = binding.webView.canGoForward()
     }
 
-    /** Loads the built-in home page and shows an empty address bar. */
     private fun loadHome() {
         binding.addressBar.setText("")
         binding.webView.loadUrl(Prefs.HOME_URL)
     }
 
-    /**
-     * Hides our internal sentinel URLs from the address bar. Right now
-     * only "minimal://home" is sentinel — we show an empty field (so
-     * the hint fires) instead of the raw scheme.
-     */
     private fun displayUrl(url: String): String =
         if (url.startsWith("minimal://")) "" else url
 
