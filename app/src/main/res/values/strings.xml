@@ -31,7 +31,7 @@
 
     <string name="tabs_title">Tabs</string>
     <string name="tabs_new">+ New tab</string>
-    <string name="tab_untitled">New tab</string>
+    <string name="tab_untitled">New Tab</string>
 
     <string name="exit_title">Exit Minimal Browser?</string>
     <string name="exit_message">This will close all tabs.</string>
