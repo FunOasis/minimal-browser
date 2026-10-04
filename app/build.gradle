@@ -9,7 +9,6 @@
 //   • versionCode comes from GITHUB_RUN_NUMBER so every CI run bumps it,
 //     allowing in-place updates.
 // =============================================================================
-
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
@@ -18,8 +17,8 @@ plugins {
 // -----------------------------------------------------------------------------
 // Groovy parses `versionCode (expr).toInteger()` ambiguously — pre-compute.
 // -----------------------------------------------------------------------------
-def ciRunNumber         = System.getenv("GITHUB_RUN_NUMBER")
-def isNumericRunNumber  = ciRunNumber != null && ciRunNumber.isInteger()
+def ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")
+def isNumericRunNumber = ciRunNumber != null && ciRunNumber.isInteger()
 def computedVersionCode = isNumericRunNumber ? ciRunNumber.toInteger() : 1
 def computedVersionName = "1.0.${computedVersionCode}"
 
@@ -33,17 +32,14 @@ def envKeyAlias      = System.getenv("KEY_ALIAS")
 def envKeyPassword   = System.getenv("KEY_PASSWORD")
 
 def keystoreFile = envKeystorePath ? file(envKeystorePath) : null
-
-def hasReleaseKeystore =
-        keystoreFile != null &&
-        keystoreFile.exists() &&
+def hasReleaseKeystore = keystoreFile != null && keystoreFile.exists() &&
         envStorePassword != null && !envStorePassword.isEmpty() &&
-        envKeyAlias      != null && !envKeyAlias.isEmpty() &&
-        envKeyPassword   != null && !envKeyPassword.isEmpty()
+        envKeyAlias != null && !envKeyAlias.isEmpty() &&
+        envKeyPassword != null && !envKeyPassword.isEmpty()
 
 logger.lifecycle(hasReleaseKeystore
         ? "🔐 Signing with release keystore: ${keystoreFile}"
-        : "⚠️  No release keystore found — release APK will be UNSIGNED.")
+        : "⚠️ No release keystore found — release APK will be UNSIGNED.")
 
 android {
     namespace 'com.minimalbrowser'
@@ -53,21 +49,22 @@ android {
         applicationId "com.minimalbrowser"
         minSdk 26
         targetSdk 34
-
         versionCode computedVersionCode
         versionName computedVersionName
 
-        ndk { abiFilters "arm64-v8a", "x86_64" }
+        ndk {
+            abiFilters "arm64-v8a", "x86_64"
+        }
     }
 
     // --- Signing configs --------------------------------------------------
     signingConfigs {
         if (hasReleaseKeystore) {
             release {
-                storeFile     keystoreFile
+                storeFile keystoreFile
                 storePassword envStorePassword
-                keyAlias      envKeyAlias
-                keyPassword   envKeyPassword
+                keyAlias envKeyAlias
+                keyPassword envKeyPassword
             }
         }
     }
@@ -79,7 +76,8 @@ android {
             }
             minifyEnabled true
             shrinkResources true
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                    'proguard-rules.pro'
         }
         debug {
             if (hasReleaseKeystore) {
@@ -95,7 +93,9 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = '17' }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
 
     buildFeatures {
         viewBinding true
@@ -117,7 +117,7 @@ dependencies {
     implementation 'com.google.android.material:material:1.12.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.2.1'
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+    implementation 'androidx.webkit:webkit:1.12.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
-
     testImplementation 'junit:junit:4.13.2'
 }
