@@ -1,46 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- ============================================================
-         Minimal Browser — dark glass palette
-         Window is pure black so the URL pill's subtle glass gradient
-         reads as "lit from above". Elevated surfaces use #1A1A1A so
-         PopupMenu and dialogs stay visible against the black window.
-         ============================================================ -->
-
-    <!-- Window & surfaces -->
     <color name="window_bg">#000000</color>
     <color name="surface">#1A1A1A</color>
     <color name="surface_variant">#262626</color>
 
-    <!-- URL pill — glass gradient -->
-    <color name="urlbar_fill_top">#26FFFFFF</color>       <!-- 15% white -->
-    <color name="urlbar_fill_bottom">#0FFFFFFF</color>    <!--  6% white -->
-    <color name="urlbar_border">#1FFFFFFF</color>         <!-- 12% white -->
-    <color name="urlbar_border_focused">#994D6BFE</color> <!-- accent @ 60% -->
+    <color name="urlbar_fill_top">#26FFFFFF</color>
+    <color name="urlbar_fill_bottom">#0FFFFFFF</color>
+    <color name="urlbar_border">#1FFFFFFF</color>
+    <color name="urlbar_border_focused">#994D6BFE</color>
 
-    <!-- Icons -->
     <color name="icon_primary">#F5F5F5</color>
     <color name="icon_secondary">#8A8A8A</color>
-    <color name="icon_disabled">#4DFFFFFF</color>         <!-- 30% white -->
+    <color name="icon_disabled">#4DFFFFFF</color>
 
-    <!-- Text -->
     <color name="text_primary">#FFFFFF</color>
     <color name="text_secondary">#8A8A8A</color>
-    <color name="text_tertiary">#5C5C5C</color>           <!-- hint text -->
+    <color name="text_tertiary">#5C5C5C</color>
 
-    <!-- Accent (M3 primary) -->
     <color name="accent">#4D6BFE</color>
     <color name="accent_pressed">#3D5BE0</color>
 
-    <!-- Progress -->
     <color name="progress_track">#1FFFFFFF</color>
-
-    <!-- Ripple / state overlays -->
     <color name="ripple_light">#33FFFFFF</color>
-
-    <!-- Divider -->
     <color name="divider">#1AFFFFFF</color>
 
-    <!-- Adaptive launcher icon background -->
     <color name="ic_launcher_background">#000000</color>
+
+    <color name="footer_text">#5C5C5C</color>
 </resources>
