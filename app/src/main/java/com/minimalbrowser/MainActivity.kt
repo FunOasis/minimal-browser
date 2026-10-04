@@ -67,9 +67,10 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             }
         }
 
-        // Hand any file download to the system DownloadManager. Fires when
-        // WebView can't render a response in-page — Content-Disposition
-        // attachments, <a download> links, and unhandled MIME types.
+        // Fires when the server sends Content-Disposition: attachment or
+        // an unrenderable MIME type. Our extension-based interception in
+        // BlockingWebViewClient covers the cases WebView would otherwise
+        // render (md, json, csv, code files, …).
         binding.webView.setDownloadListener {
                 url, userAgent, contentDisposition, mimeType, contentLength ->
             DownloadHandler.handle(
@@ -142,8 +143,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        // Give DownloadHandler a chance to pick up any deferred download
-        // that was waiting on WRITE_EXTERNAL_STORAGE (API 26-28 only).
         DownloadHandler.onPermissionResult(this, requestCode, grantResults)
     }
 
@@ -193,9 +192,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
 
         R.id.action_downloads -> {
-            // Hand off to the system Downloads UI (the one built into
-            // every Android build). We don't ship our own viewer — that
-            // would double the app's surface area for no real gain.
             try {
                 startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
             } catch (_: Exception) {
@@ -223,19 +219,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     // Custom filters dialog
     // ---------------------------------------------------------------------
 
-    /**
-     * Opens the Custom filters dialog.
-     *
-     * Two text areas — one for hosts, one for URL keywords. On Save we
-     * persist to Prefs and call blocker.reloadCustomRules(), which
-     * merges the new rules on a background thread and hot-swaps the
-     * matcher. Clear wipes both fields and reverts to just the built-in
-     * assets. Cancel leaves prefs untouched.
-     *
-     * The stats line shows the *currently active* rule counts so the
-     * user can verify the merge landed (reopen the dialog after Save to
-     * see the updated numbers).
-     */
     private fun showCustomFiltersDialog() {
         val view = layoutInflater.inflate(R.layout.dialog_custom_filters, null)
         val editBlocklist = view.findViewById<EditText>(R.id.editBlocklist)
@@ -303,6 +286,25 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     override fun onRenderProcessGone() {
         Toast.makeText(this, "Renderer crashed — restarting", Toast.LENGTH_SHORT).show()
         recreate()
+    }
+
+    /**
+     * Fired by BlockingWebViewClient when the navigation target is a file
+     * we want to save rather than render. We don't know the Content-
+     * Disposition or MIME type at this stage — the server hasn't been hit
+     * yet — so we pass nulls and let DownloadHandler derive the filename
+     * from the URL's own extension (which is exactly the extension that
+     * triggered this callback in the first place).
+     */
+    override fun onDownloadRequested(url: String) {
+        DownloadHandler.handle(
+            activity = this,
+            url = url,
+            userAgent = binding.webView.settings.userAgentString,
+            contentDisposition = null,
+            mimeType = null,
+            contentLength = -1L
+        )
     }
 
     // ---------------------------------------------------------------------
