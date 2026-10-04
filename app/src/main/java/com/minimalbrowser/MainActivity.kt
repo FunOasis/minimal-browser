@@ -1,7 +1,9 @@
 package com.minimalbrowser
 
 import android.annotation.SuppressLint
+import android.app.DownloadManager
 import android.content.ComponentCallbacks2
+import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.view.ContextThemeWrapper
@@ -65,6 +67,21 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             }
         }
 
+        // Hand any file download to the system DownloadManager. Fires when
+        // WebView can't render a response in-page — Content-Disposition
+        // attachments, <a download> links, and unhandled MIME types.
+        binding.webView.setDownloadListener {
+                url, userAgent, contentDisposition, mimeType, contentLength ->
+            DownloadHandler.handle(
+                activity = this,
+                url = url,
+                userAgent = userAgent,
+                contentDisposition = contentDisposition,
+                mimeType = mimeType,
+                contentLength = contentLength
+            )
+        }
+
         binding.swipeRefresh.setOnRefreshListener { binding.webView.reload() }
 
         binding.btnBack.setOnClickListener {
@@ -119,6 +136,17 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // Give DownloadHandler a chance to pick up any deferred download
+        // that was waiting on WRITE_EXTERNAL_STORAGE (API 26-28 only).
+        DownloadHandler.onPermissionResult(this, requestCode, grantResults)
+    }
+
     override fun onDestroy() {
         with(binding.webView) {
             stopLoading()
@@ -161,6 +189,18 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
         R.id.action_custom_filters -> {
             showCustomFiltersDialog()
+            true
+        }
+
+        R.id.action_downloads -> {
+            // Hand off to the system Downloads UI (the one built into
+            // every Android build). We don't ship our own viewer — that
+            // would double the app's surface area for no real gain.
+            try {
+                startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
+            } catch (_: Exception) {
+                Toast.makeText(this, R.string.download_no_app, Toast.LENGTH_SHORT).show()
+            }
             true
         }
 
