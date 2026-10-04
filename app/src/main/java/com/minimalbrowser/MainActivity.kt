@@ -1,6 +1,7 @@
 package com.minimalbrowser
 
 import android.annotation.SuppressLint
+import android.content.ComponentCallbacks2
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.view.ContextThemeWrapper
@@ -77,8 +78,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             if (isGo) { navigate(); true } else false
         }
 
-        // Tap-to-select: when the address bar gains focus, select the
-        // whole URL so the user can immediately type a replacement.
         binding.addressBar.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 binding.addressBar.post { binding.addressBar.selectAll() }
@@ -110,6 +109,23 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.webView.saveState(outState)
     }
 
+    /**
+     * React to system memory pressure. The WebView's in-memory resource
+     * cache is by far the biggest reclaimable buffer we own, and it can
+     * be rebuilt transparently on the next page load. We only clear when
+     * the system is telling us it's actually short on RAM (RUNNING_LOW
+     * and above) — clearing on every callback would tank performance.
+     *
+     * Note: clearCache(false) keeps disk cache intact. Only memory is
+     * dropped.
+     */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            binding.webView.clearCache(false)
+        }
+    }
+
     override fun onDestroy() {
         with(binding.webView) {
             stopLoading()
@@ -124,14 +140,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     // Overflow menu
     // ---------------------------------------------------------------------
 
-    /**
-     * Pops the overflow menu.
-     *
-     * The popup is created with a themed ContextThemeWrapper so that
-     * android:popupBackground and android:popupMenuStyle are honoured —
-     * this is what gives the popup its rounded glass card look. Without
-     * the wrapper, PopupMenu would fall back to the system popup style.
-     */
     private fun showOverflowMenu(anchor: View) {
         val themedContext = ContextThemeWrapper(
             this,
@@ -166,9 +174,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
 
         R.id.action_exit -> {
-            // finishAndRemoveTask (API 21+) removes the task from the
-            // recents list so the browser exits cleanly instead of
-            // lingering as a card the user has to swipe away.
             finishAndRemoveTask()
             true
         }
@@ -209,11 +214,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         )
     }
 
-    /**
-     * Renderer crashed. The old WebView has already been detached and
-     * destroyed by BlockingWebViewClient — we just need to spin the whole
-     * Activity back up with a fresh WebView.
-     */
     override fun onRenderProcessGone() {
         Toast.makeText(this, "Renderer crashed — restarting", Toast.LENGTH_SHORT).show()
         recreate()
@@ -228,17 +228,11 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.btnForward.isEnabled = binding.webView.canGoForward()
     }
 
-    /** Loads the built-in home page and shows an empty address bar. */
     private fun loadHome() {
         binding.addressBar.setText("")
         binding.webView.loadUrl(Prefs.HOME_URL)
     }
 
-    /**
-     * Hides our internal sentinel URLs from the address bar. Right now
-     * only "minimal://home" is sentinel — show an empty field so the
-     * hint fires instead of the raw scheme.
-     */
     private fun displayUrl(url: String): String =
         if (url.startsWith("minimal://")) "" else url
 
