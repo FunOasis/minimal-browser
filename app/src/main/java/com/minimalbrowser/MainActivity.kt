@@ -30,6 +30,10 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     private lateinit var blocker: AdBlocker
     private lateinit var prefs: Prefs
 
+    /** Live page title + favicon, kept so the shortcut builder can use them. */
+    private var currentTitle: String = ""
+    private var currentFavicon: Bitmap? = null
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,8 +59,14 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
                 if (newProgress == 100) binding.swipeRefresh.isRefreshing = false
             }
 
+            override fun onReceivedTitle(view: WebView?, title: String?) {
+                super.onReceivedTitle(view, title)
+                currentTitle = title ?: ""
+            }
+
             override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
                 super.onReceivedIcon(view, icon)
+                currentFavicon = icon
                 if (icon == null) {
                     binding.favicon.setImageDrawable(null)
                     binding.favicon.visibility = View.GONE
@@ -67,10 +77,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             }
         }
 
-        // Fires when the server sends Content-Disposition: attachment or
-        // an unrenderable MIME type. Our extension-based interception in
-        // BlockingWebViewClient covers the cases WebView would otherwise
-        // render (md, json, csv, code files, …).
         binding.webView.setDownloadListener {
                 url, userAgent, contentDisposition, mimeType, contentLength ->
             DownloadHandler.handle(
@@ -116,13 +122,40 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             }
         })
 
+        // Cold-start routing:
+        //   1. Config change / process restore → WebView restores itself.
+        //   2. Launched from a home-screen shortcut → load that URL.
+        //   3. Launched normally → home page.
         if (savedInstanceState != null) {
+            intent?.removeExtra(EXTRA_SHORTCUT_URL)
             binding.webView.restoreState(savedInstanceState)
         } else {
-            loadHome()
+            val shortcutUrl = intent?.getStringExtra(EXTRA_SHORTCUT_URL)
+            if (!shortcutUrl.isNullOrBlank()) {
+                intent.removeExtra(EXTRA_SHORTCUT_URL)
+                loadUrl(shortcutUrl)
+            } else {
+                loadHome()
+            }
         }
 
         refreshNavButtons()
+    }
+
+    /**
+     * Fires when a shortcut launches us while MainActivity is already at the
+     * top of the stack (launchMode=singleTop). A shortcut tap is a fresh
+     * page load — we don't want the previous tab's WebView state.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+
+        val url = intent.getStringExtra(EXTRA_SHORTCUT_URL)
+        intent.removeExtra(EXTRA_SHORTCUT_URL)
+        if (!url.isNullOrBlank()) {
+            loadUrl(url)
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -174,6 +207,11 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {
         R.id.action_home -> { loadHome(); true }
 
+        R.id.action_add_shortcut -> {
+            addCurrentPageShortcut()
+            true
+        }
+
         R.id.action_js -> {
             prefs.javaScriptEnabled = !prefs.javaScriptEnabled
             binding.webView.settings.javaScriptEnabled = prefs.javaScriptEnabled
@@ -213,6 +251,39 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
 
         else -> false
+    }
+
+    // ---------------------------------------------------------------------
+    // Add-to-home-screen
+    // ---------------------------------------------------------------------
+
+    /**
+     * Pin a launcher shortcut for the currently displayed page.
+     *
+     * The WebView can report a null URL or the internal home sentinel
+     * while a page is still committing, so we bail with a toast rather
+     * than pinning a useless shortcut.
+     */
+    private fun addCurrentPageShortcut() {
+        val url = binding.webView.url
+        if (url.isNullOrBlank() || url.startsWith("minimal://")) {
+            Toast.makeText(this, R.string.shortcut_needs_page, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val result = ShortcutHelper.requestPin(
+            context = this,
+            url = url,
+            title = currentTitle.ifBlank { binding.webView.title.orEmpty() },
+            favicon = currentFavicon
+        )
+
+        val msgRes = when (result) {
+            ShortcutHelper.Result.PINNED      -> R.string.shortcut_requested
+            ShortcutHelper.Result.UNSUPPORTED -> R.string.shortcut_unsupported
+            ShortcutHelper.Result.INVALID     -> R.string.shortcut_needs_page
+        }
+        Toast.makeText(this, msgRes, Toast.LENGTH_SHORT).show()
     }
 
     // ---------------------------------------------------------------------
@@ -288,14 +359,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         recreate()
     }
 
-    /**
-     * Fired by BlockingWebViewClient when the navigation target is a file
-     * we want to save rather than render. We don't know the Content-
-     * Disposition or MIME type at this stage — the server hasn't been hit
-     * yet — so we pass nulls and let DownloadHandler derive the filename
-     * from the URL's own extension (which is exactly the extension that
-     * triggered this callback in the first place).
-     */
     override fun onDownloadRequested(url: String) {
         DownloadHandler.handle(
             activity = this,
@@ -319,6 +382,17 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     private fun loadHome() {
         binding.addressBar.setText("")
         binding.webView.loadUrl(Prefs.HOME_URL)
+    }
+
+    /**
+     * Load an arbitrary URL and reflect it in the address bar immediately,
+     * so a shortcut tap feels instant even before the page commits.
+     */
+    private fun loadUrl(url: String) {
+        binding.addressBar.setText(displayUrl(url))
+        binding.progressBar.progress = 0
+        binding.progressBar.visibility = View.VISIBLE
+        binding.webView.loadUrl(url)
     }
 
     private fun displayUrl(url: String): String =
@@ -362,5 +436,13 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
               <p class="url">$safeUrl</p>
             </body></html>
         """.trimIndent()
+    }
+
+    companion object {
+        /**
+         * Extra key for launching MainActivity straight into a specific URL,
+         * used by home-screen shortcuts created via ShortcutHelper.
+         */
+        const val EXTRA_SHORTCUT_URL = "com.minimalbrowser.EXTRA_SHORTCUT_URL"
     }
 }
