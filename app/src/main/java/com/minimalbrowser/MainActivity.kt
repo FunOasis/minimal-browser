@@ -77,6 +77,16 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             if (isGo) { navigate(); true } else false
         }
 
+        // Tap-to-select: when the address bar gains focus, select the
+        // whole URL so the user can immediately type a replacement —
+        // no manual clearing needed. post{} runs our selectAll after
+        // the tap's own cursor placement, so the selection wins.
+        binding.addressBar.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                binding.addressBar.post { binding.addressBar.selectAll() }
+            }
+        }
+
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (binding.webView.canGoBack()) {
@@ -91,9 +101,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         if (savedInstanceState != null) {
             binding.webView.restoreState(savedInstanceState)
         } else {
-            val home = prefs.homepage
-            binding.webView.loadUrl(home)
-            binding.addressBar.setText(home)
+            loadHome()
         }
 
         refreshNavButtons()
@@ -115,7 +123,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     // ---------------------------------------------------------------------
-    // Overflow menu (was: ActionBar options menu)
+    // Overflow menu
     // ---------------------------------------------------------------------
 
     private fun showOverflowMenu(anchor: View) {
@@ -126,12 +134,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {
-        R.id.action_home -> {
-            val home = prefs.homepage
-            binding.webView.loadUrl(home)
-            binding.addressBar.setText(home)
-            true
-        }
+        R.id.action_home -> { loadHome(); true }
         R.id.action_js -> {
             prefs.javaScriptEnabled = !prefs.javaScriptEnabled
             binding.webView.settings.javaScriptEnabled = prefs.javaScriptEnabled
@@ -158,7 +161,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     override fun onUrlChanged(url: String) {
         if (binding.addressBar.hasFocus()) return
-        binding.addressBar.setText(url)
+        binding.addressBar.setText(displayUrl(url))
     }
 
     override fun onNavStateChanged(canGoBack: Boolean, canGoForward: Boolean) {
@@ -193,6 +196,20 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.btnBack.isEnabled    = binding.webView.canGoBack()
         binding.btnForward.isEnabled = binding.webView.canGoForward()
     }
+
+    /** Loads the built-in home page and shows an empty address bar. */
+    private fun loadHome() {
+        binding.addressBar.setText("")
+        binding.webView.loadUrl(Prefs.HOME_URL)
+    }
+
+    /**
+     * Hides our internal sentinel URLs from the address bar. Right now
+     * only "minimal://home" is sentinel — we show an empty field (so
+     * the hint fires) instead of the raw scheme.
+     */
+    private fun displayUrl(url: String): String =
+        if (url.startsWith("minimal://")) "" else url
 
     private fun navigate() {
         val input = binding.addressBar.text.toString().trim()
