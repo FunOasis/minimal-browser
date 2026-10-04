@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -15,50 +16,49 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingStart="4dp"
-        android:paddingEnd="12dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="6dp">
+        android:paddingStart="@dimen/topbar_padding_h"
+        android:paddingEnd="@dimen/topbar_padding_h"
+        android:paddingTop="@dimen/topbar_padding_v"
+        android:paddingBottom="@dimen/topbar_padding_v">
 
         <ImageButton
             android:id="@+id/btnBack"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            style="@style/Widget.MinimalBrowser.IconButton"
             android:src="@drawable/ic_arrow_back"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:tint="@color/icon_primary"
             android:contentDescription="@string/cd_back" />
 
         <ImageButton
             android:id="@+id/btnForward"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            style="@style/Widget.MinimalBrowser.IconButton"
             android:src="@drawable/ic_arrow_forward"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:tint="@color/icon_primary"
             android:contentDescription="@string/cd_forward" />
 
-        <!-- URL pill: rounded glass container, favicon inside on the left,
-             hamburger on the right, editable URL in the middle. -->
+        <!-- URL pill.
+             `addStatesFromChildren` makes this wrapper inherit the
+             EditText's focused state, so bg_urlbar's selector can
+             swap the border colour without any Kotlin glue. -->
         <LinearLayout
+            android:id="@+id/urlPill"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="@dimen/urlbar_height"
             android:layout_weight="1"
-            android:layout_marginStart="4dp"
+            android:layout_marginStart="@dimen/urlbar_margin_start"
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:background="@drawable/bg_urlbar"
-            android:paddingStart="12dp"
-            android:paddingEnd="2dp">
+            android:addStatesFromChildren="true"
+            android:paddingStart="@dimen/urlbar_padding_start"
+            android:paddingEnd="@dimen/urlbar_padding_end">
 
             <ImageView
                 android:id="@+id/favicon"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:layout_marginEnd="8dp"
+                android:layout_width="@dimen/favicon_size"
+                android:layout_height="@dimen/favicon_size"
+                android:layout_marginEnd="@dimen/favicon_margin_end"
                 android:scaleType="fitCenter"
                 android:visibility="gone"
-                tools:src="@android:drawable/ic_menu_info_details" />
+                tools:src="@android:drawable/ic_menu_info_details"
+                tools:visibility="visible" />
 
             <EditText
                 android:id="@+id/addressBar"
@@ -72,27 +72,30 @@
                 android:maxLines="1"
                 android:singleLine="true"
                 android:textColor="@color/text_primary"
-                android:textColorHint="@color/text_secondary"
-                android:textSize="14sp" />
+                android:textColorHint="@color/text_tertiary"
+                android:textSize="@dimen/text_urlbar"
+                android:importantForAutofill="no" />
 
             <ImageButton
                 android:id="@+id/btnMenu"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
+                style="@style/Widget.MinimalBrowser.IconButton"
                 android:src="@drawable/ic_menu"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:tint="@color/icon_primary"
                 android:contentDescription="@string/cd_menu" />
         </LinearLayout>
     </LinearLayout>
 
-    <ProgressBar
+    <!-- M3 LinearProgressIndicator: thinner, rounded, animates smoothly.
+         Same @+id/progressBar so MainActivity.kt needs no changes —
+         LinearProgressIndicator extends ProgressBar. -->
+    <com.google.android.material.progressindicator.LinearProgressIndicator
         android:id="@+id/progressBar"
-        style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
-        android:layout_height="2dp"
-        android:progressTint="@color/accent"
+        android:layout_height="wrap_content"
         android:visibility="gone"
+        app:trackThickness="@dimen/progress_thickness"
+        app:trackCornerRadius="1dp"
+        app:indicatorColor="@color/accent"
+        app:trackColor="@color/progress_track"
         tools:visibility="visible" />
 
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
