@@ -1,14 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Top bar -->
     <dimen name="topbar_padding_h">8dp</dimen>
     <dimen name="topbar_padding_v">8dp</dimen>
 
-    <!-- Icon buttons (40dp visual + 8dp padding = 24dp icon) -->
     <dimen name="icon_button_size">40dp</dimen>
     <dimen name="icon_button_padding">8dp</dimen>
 
-    <!-- URL pill -->
     <dimen name="urlbar_height">44dp</dimen>
     <dimen name="urlbar_margin_start">4dp</dimen>
     <dimen name="urlbar_padding_start">14dp</dimen>
@@ -17,9 +14,9 @@
     <dimen name="favicon_size">20dp</dimen>
     <dimen name="favicon_margin_end">8dp</dimen>
 
-    <!-- Progress bar -->
     <dimen name="progress_thickness">2dp</dimen>
 
-    <!-- Typography -->
     <dimen name="text_urlbar">15sp</dimen>
+
+    <dimen name="footer_height">28dp</dimen>
 </resources>
