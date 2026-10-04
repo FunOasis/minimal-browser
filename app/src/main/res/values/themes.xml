@@ -1,11 +1,46 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ============================================================
+         M3 dark theme, black-tinted surface, glass accent.
+         colorSurface is intentionally #1A1A1A (not pure black) so
+         PopupMenu and Material dialogs remain visible against the
+         window_bg (#000000).
+         ============================================================ -->
     <style name="Theme.MinimalBrowser" parent="Theme.Material3.Dark.NoActionBar">
+        <!-- Window -->
         <item name="android:windowBackground">@color/window_bg</item>
+        <item name="android:colorBackground">@color/window_bg</item>
         <item name="android:statusBarColor">@color/window_bg</item>
         <item name="android:navigationBarColor">@color/window_bg</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+
+        <!-- M3 color tokens -->
         <item name="colorPrimary">@color/accent</item>
+        <item name="colorOnPrimary">@color/text_primary</item>
         <item name="colorAccent">@color/accent</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorSurfaceVariant">@color/surface_variant</item>
+        <item name="colorOnSurfaceVariant">@color/text_secondary</item>
+        <item name="colorOutline">@color/divider</item>
+
+        <!-- Ripple / state overlay -->
+        <item name="colorControlHighlight">@color/ripple_light</item>
+        <item name="android:colorControlHighlight">@color/ripple_light</item>
     </style>
+
+    <!-- ============================================================
+         Reusable icon button — borderless ripple, stateful tint,
+         fixed 40dp touch target with 8dp internal padding.
+         ============================================================ -->
+    <style name="Widget.MinimalBrowser.IconButton" parent="Widget.AppCompat.ImageButton">
+        <item name="android:layout_width">@dimen/icon_button_size</item>
+        <item name="android:layout_height">@dimen/icon_button_size</item>
+        <item name="android:padding">@dimen/icon_button_padding</item>
+        <item name="android:scaleType">centerInside</item>
+        <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
+        <item name="android:tint">@color/icon_tint</item>
+    </style>
+
 </resources>
