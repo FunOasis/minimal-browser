@@ -30,7 +30,17 @@ class Prefs private constructor(context: Context) {
     companion object {
         private const val KEY_HOMEPAGE = "homepage"
         private const val KEY_JS       = "javascript_enabled"
-        const val DEFAULT_HOMEPAGE     = "https://search.brave.com/"
+
+        /**
+         * Internal sentinel for the built-in home page. BlockingWebViewClient
+         * intercepts main-frame requests to this URL and serves
+         * assets/home.html. Never sent to the network.
+         *
+         * MainActivity hides any URL starting with "minimal://" from the
+         * address bar so the user just sees the empty hint instead.
+         */
+        const val HOME_URL         = "minimal://home"
+        const val DEFAULT_HOMEPAGE = HOME_URL
 
         @Volatile private var inst: Prefs? = null
 
