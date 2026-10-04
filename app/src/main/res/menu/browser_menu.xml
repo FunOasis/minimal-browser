@@ -4,6 +4,9 @@
         android:id="@+id/action_home"
         android:title="@string/menu_home" />
     <item
+        android:id="@+id/action_add_shortcut"
+        android:title="@string/menu_add_shortcut" />
+    <item
         android:id="@+id/action_js"
         android:title="@string/menu_toggle_js" />
     <item
