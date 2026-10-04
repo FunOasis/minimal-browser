@@ -29,6 +29,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     private lateinit var prefs: Prefs
     private lateinit var tabManager: TabManager
 
+    private var lastSeenTabId: Long = -1L
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -328,7 +330,12 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     override fun onUrlChanged(view: WebView, url: String) {
         if (view !== tabManager.getActiveWebView()) return
         updateFooterFor(url)
-        if (binding.addressBar.hasFocus()) return
+
+        val currentTabId = tabManager.getActive()?.id ?: -1L
+        val tabChanged = currentTabId != lastSeenTabId
+        lastSeenTabId = currentTabId
+
+        if (binding.addressBar.hasFocus() && !tabChanged) return
         binding.addressBar.setText(displayUrl(url))
     }
 
