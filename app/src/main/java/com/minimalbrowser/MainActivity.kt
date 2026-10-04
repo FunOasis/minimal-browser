@@ -3,6 +3,7 @@ package com.minimalbrowser
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.view.ContextThemeWrapper
 import android.view.KeyEvent
 import android.view.MenuItem
 import android.view.View
@@ -76,6 +77,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             if (isGo) { navigate(); true } else false
         }
 
+        // Tap-to-select: when the address bar gains focus, select the
+        // whole URL so the user can immediately type a replacement.
         binding.addressBar.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 binding.addressBar.post { binding.addressBar.selectAll() }
@@ -121,8 +124,20 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     // Overflow menu
     // ---------------------------------------------------------------------
 
+    /**
+     * Pops the overflow menu.
+     *
+     * The popup is created with a themed ContextThemeWrapper so that
+     * android:popupBackground and android:popupMenuStyle are honoured —
+     * this is what gives the popup its rounded glass card look. Without
+     * the wrapper, PopupMenu would fall back to the system popup style.
+     */
     private fun showOverflowMenu(anchor: View) {
-        val popup = PopupMenu(this, anchor)
+        val themedContext = ContextThemeWrapper(
+            this,
+            R.style.ThemeOverlay_MinimalBrowser_PopupMenu
+        )
+        val popup = PopupMenu(themedContext, anchor)
         popup.menuInflater.inflate(R.menu.browser_menu, popup.menu)
         popup.setOnMenuItemClickListener { item -> handleMenu(item) }
         popup.show()
@@ -147,6 +162,14 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             binding.webView.clearHistory()
             binding.webView.clearCache(true)
             Toast.makeText(this, "Cache cleared", Toast.LENGTH_SHORT).show()
+            true
+        }
+
+        R.id.action_exit -> {
+            // finishAndRemoveTask (API 21+) removes the task from the
+            // recents list so the browser exits cleanly instead of
+            // lingering as a card the user has to swipe away.
+            finishAndRemoveTask()
             true
         }
 
@@ -205,11 +228,17 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.btnForward.isEnabled = binding.webView.canGoForward()
     }
 
+    /** Loads the built-in home page and shows an empty address bar. */
     private fun loadHome() {
         binding.addressBar.setText("")
         binding.webView.loadUrl(Prefs.HOME_URL)
     }
 
+    /**
+     * Hides our internal sentinel URLs from the address bar. Right now
+     * only "minimal://home" is sentinel — show an empty field so the
+     * hint fires instead of the raw scheme.
+     */
     private fun displayUrl(url: String): String =
         if (url.startsWith("minimal://")) "" else url
 
