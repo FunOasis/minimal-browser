@@ -9,24 +9,11 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.Window
 import android.view.WindowManager
-import android.widget.FrameLayout
-import android.widget.GridLayout
 import android.widget.ImageButton
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 
-/**
- * Bottom-anchored dialog that lists every open tab as a card in a 2-column
- * grid. Tapping a card switches to that tab; tapping the X closes it. The
- * dialog's window stops above the MINIMAL BROWSER footer strip, so the
- * footer remains visible while the sheet is open.
- *
- * Implemented as a plain Dialog (not Material BottomSheetDialog) because we
- * need to reserve a fixed strip at the bottom of the screen for the footer.
- * The root view of the sheet has paddingBottom equal to the footer height,
- * which makes the sheet's own glass card end above that strip. The window
- * background is transparent, so the underlying footer shows through.
- */
 class TabSwitcherSheet(
     private val context: Context,
     private val tabManager: TabManager
@@ -38,11 +25,11 @@ class TabSwitcherSheet(
         val root = LayoutInflater.from(context)
             .inflate(R.layout.sheet_tabs, null, false)
 
-        val grid = root.findViewById<GridLayout>(R.id.tabGrid)
+        val rows = root.findViewById<LinearLayout>(R.id.tabRows)
         val closeSheet = root.findViewById<ImageButton>(R.id.closeSheet)
         val newTab = root.findViewById<View>(R.id.newTabButton)
 
-        rebuildGrid(grid)
+        rebuildRows(rows)
 
         val d = Dialog(context).apply {
             requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -76,57 +63,82 @@ class TabSwitcherSheet(
         dialog?.dismiss()
     }
 
-    // ---------------------------------------------------------------------
-
-    private fun rebuildGrid(grid: GridLayout) {
-        grid.removeAllViews()
+    private fun rebuildRows(container: LinearLayout) {
+        container.removeAllViews()
         val inflater = LayoutInflater.from(context)
         val activeIdx = tabManager.getActiveIndex()
+        val tabs = tabManager.tabs
 
-        tabManager.tabs.forEachIndexed { index, tab ->
-            val cell = inflater.inflate(R.layout.item_tab, grid, false)
-
-            val number = cell.findViewById<TextView>(R.id.tabNumber)
-            val title = cell.findViewById<TextView>(R.id.tabTitle)
-            val url = cell.findViewById<TextView>(R.id.tabUrl)
-            val favicon = cell.findViewById<ImageView>(R.id.tabFavicon)
-            val close = cell.findViewById<ImageButton>(R.id.closeTab)
-
-            number.text = (index + 1).toString()
-
-            title.text = tab.title.ifBlank {
-                hostLabel(tab.url).ifBlank { context.getString(R.string.tab_untitled) }
-            }
-            url.text = tab.url
-
-            if (tab.favicon != null) {
-                favicon.setImageBitmap(tab.favicon)
-                favicon.visibility = View.VISIBLE
-            } else {
-                favicon.setImageDrawable(null)
-                favicon.visibility = View.GONE
+        var i = 0
+        while (i < tabs.size) {
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
             }
 
-            cell.background = context.getDrawable(
-                if (index == activeIdx) R.drawable.bg_tab_card_active
-                else R.drawable.bg_tab_card
-            )
-
-            cell.setOnClickListener {
-                tabManager.switchTo(index)
-                dismiss()
-            }
-
-            close.setOnClickListener {
-                tabManager.closeTab(index)
-                if (tabManager.count() <= 1) {
-                    dismiss()
+            for (j in 0 until 2) {
+                if (i + j < tabs.size) {
+                    val cell = inflater.inflate(R.layout.item_tab, row, false)
+                    bindCell(cell, i + j, activeIdx)
+                    row.addView(cell)
                 } else {
-                    rebuildGrid(grid)
+                    val spacer = View(context)
+                    spacer.layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+                    row.addView(spacer)
                 }
             }
 
-            grid.addView(cell)
+            container.addView(row)
+            i += 2
+        }
+    }
+
+    private fun bindCell(cell: View, index: Int, activeIdx: Int) {
+        val tab = tabManager.tabs[index]
+
+        val number = cell.findViewById<TextView>(R.id.tabNumber)
+        val title = cell.findViewById<TextView>(R.id.tabTitle)
+        val url = cell.findViewById<TextView>(R.id.tabUrl)
+        val favicon = cell.findViewById<ImageView>(R.id.tabFavicon)
+        val close = cell.findViewById<ImageButton>(R.id.closeTab)
+
+        number.text = (index + 1).toString()
+
+        title.text = tab.title.ifBlank {
+            hostLabel(tab.url).ifBlank { context.getString(R.string.tab_untitled) }
+        }
+        url.text = tab.url
+
+        if (tab.favicon != null) {
+            favicon.setImageBitmap(tab.favicon)
+            favicon.visibility = View.VISIBLE
+        } else {
+            favicon.setImageDrawable(null)
+            favicon.visibility = View.GONE
+        }
+
+        cell.background = context.getDrawable(
+            if (index == activeIdx) R.drawable.bg_tab_card_active
+            else R.drawable.bg_tab_card
+        )
+
+        cell.setOnClickListener {
+            tabManager.switchTo(index)
+            dismiss()
+        }
+
+        close.setOnClickListener {
+            tabManager.closeTab(index)
+            if (tabManager.count() <= 1) {
+                dismiss()
+            } else {
+                val parent = cell.parent as? LinearLayout
+                val grandparent = parent?.parent as? LinearLayout
+                if (grandparent != null) rebuildRows(grandparent)
+            }
         }
     }
 
