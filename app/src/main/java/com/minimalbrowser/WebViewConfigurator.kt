@@ -1,14 +1,17 @@
 package com.minimalbrowser
 
 import android.annotation.SuppressLint
-import android.net.http.SslError
 import android.os.Build
+import android.view.View
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 
 /**
- * Single source of truth for WebView security + performance settings.
+ * Single source of truth for WebView security + performance + stability
+ * settings.
  *
  * Everything here is conservative on purpose: a browser that renders
  * arbitrary third-party pages has to assume the page is hostile until
@@ -16,11 +19,6 @@ import android.webkit.WebView
  */
 object WebViewConfigurator {
 
-    /**
-     * Applies default settings to [webView]. [javaScriptEnabled] is passed
-     * in rather than read from Prefs so this class stays Android-only and
-     * doesn't reach into the prefs store.
-     */
     @SuppressLint("SetJavaScriptEnabled")
     fun apply(webView: WebView, javaScriptEnabled: Boolean) {
         val s: WebSettings = webView.settings
@@ -34,25 +32,41 @@ object WebViewConfigurator {
         s.displayZoomControls  = false
 
         // --- Security hardening -----------------------------------------
-        // Local file/content access: only needed if you support file:// or
-        // content:// URLs. We don't, and leaving them on lets a hostile page
-        // read the user's downloads and media store via injected JS.
         s.allowFileAccess = false
         s.allowContentAccess = false
         s.allowFileAccessFromFileURLs = false
         s.allowUniversalAccessFromFileURLs = false
 
-        // Refuse to load http:// subresources on https:// pages. The user
-        // can still navigate to http:// top-level (usesCleartextTraffic=true
-        // in the manifest), we just won't silently downgrade a secure page.
         s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
 
-        // Google's phishing / malware list, API 26+ (our minSdk).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             s.safeBrowsingEnabled = true
         }
 
-        // Cookies: first-party yes, third-party no. Massive privacy and
+        // --- Stability (crash mitigation) -------------------------------
+        //
+        // Turn OFF Chromium's algorithmic darkening. When the system
+        // forces dark mode onto a light-themed page, WebView runs a CSS
+        // color-inversion pass that — on several Adreno driver versions
+        // shipped with HyperOS / MIUI — dereferences a null buffer and
+        // segfaults inside libGLESv2_adreno.so. Our app is dark-only,
+        // so we never want the page darkened anyway. This single flag
+        // removes the most common crash trigger we've seen.
+        //
+        // androidx.webkit handles the version dance for us:
+        //   API 33+ → setAlgorithmicDarkeningAllowed(false)
+        //   API 29-32 → setForceDark(FORCE_DARK_OFF)
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(s, false)
+        }
+
+        // Pin the WebView to the hardware layer explicitly. This is the
+        // default but being explicit ensures the compositor treats the
+        // surface consistently with the rest of our UI.
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+        // --- Cookies ----------------------------------------------------
+        // First-party yes, third-party no. Massive privacy and
         // ad-tracking win, and near-zero breakage for normal browsing.
         val cookies = CookieManager.getInstance()
         cookies.setAcceptCookie(true)
