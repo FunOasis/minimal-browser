@@ -1,13 +1,30 @@
 // =============================================================================
 // Signing behaviour:
-//   • If KEYSTORE_PATH (or KEYSTORE_FILE) + KEYSTORE_PASSWORD + KEY_ALIAS +
-//     KEY_PASSWORD are all set AND the keystore file exists, both debug and
-//     release APKs are signed with the permanent keystore → in-place updates
-//     work on real devices.
-//   • Otherwise the release build type is left unsigned (debug still falls
+//   - If KEYSTORE_PATH (or KEYSTORE_FILE) plus KEYSTORE_PASSWORD, KEY_ALIAS,
+//     and KEY_PASSWORD are all set AND the keystore file exists, both debug
+//     and release APKs are signed with the permanent keystore so in-place
+//     updates work on real devices.
+//   - Otherwise the release build type is left unsigned (debug still falls
 //     back to the default debug key), which is fine for CI smoke tests.
-//   • versionCode comes from GITHUB_RUN_NUMBER so every CI run bumps it,
+//   - versionCode comes from GITHUB_RUN_NUMBER so every CI run bumps it,
 //     allowing in-place updates.
+//
+// Versioning strategy:
+//   - Tag build (refs/tags/vX.Y.Z or refs/tags/X.Y.Z):
+//       versionName = tag name with any leading v stripped.
+//       versionCode = GITHUB_RUN_NUMBER (still monotonic: each tag push is a
+//                     new CI run with a larger number than any earlier run).
+//   - Branch build (main, master, PR):
+//       versionName = 1.0.<run_number>, a developer/CI snapshot version.
+//       versionCode = GITHUB_RUN_NUMBER.
+//   - Local offline build (no CI env vars):
+//       versionName = 1.0.1, versionCode = 1.
+//
+// Why split versionCode from versionName:
+//   Android requires versionCode to strictly increase for in-place updates.
+//   Semantic tags like 0.0.1 do not satisfy that on their own, but the run
+//   number always does. versionName is what the user sees in Settings > Apps;
+//   versionCode is what the OS compares when installing.
 // =============================================================================
 plugins {
     id 'com.android.application'
@@ -15,16 +32,36 @@ plugins {
 }
 
 // -----------------------------------------------------------------------------
-// Groovy parses `versionCode (expr).toInteger()` ambiguously — pre-compute.
+// Groovy parses versionCode (expr).toInteger() ambiguously, so pre-compute.
 // -----------------------------------------------------------------------------
 def ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")
 def isNumericRunNumber = ciRunNumber != null && ciRunNumber.isInteger()
 def computedVersionCode = isNumericRunNumber ? ciRunNumber.toInteger() : 1
-def computedVersionName = "1.0.${computedVersionCode}"
 
 // -----------------------------------------------------------------------------
-// Keystore env — accept BOTH names so this file works with either workflow
-// variant (KEYSTORE_PATH is what we read first; KEYSTORE_FILE is a fallback).
+// Resolve versionName from the git ref when possible.
+//
+//   GITHUB_REF for a tag push  -> refs/tags/0.0.1  (or refs/tags/v0.0.1)
+//   GITHUB_REF for a branch    -> refs/heads/main
+//
+// Tag form strips an optional leading v so both v1.2.3 and 1.2.3 tags
+// produce the same versionName. Branch and local builds fall back to a
+// run-number-derived snapshot string.
+// -----------------------------------------------------------------------------
+def githubRef = System.getenv("GITHUB_REF") ?: ""
+def isTagBuild = githubRef.startsWith("refs/tags/")
+def rawTag = isTagBuild ? githubRef.substring("refs/tags/".length()) : null
+def tagVersionName = rawTag?.startsWith("v") ? rawTag.substring(1) : rawTag
+
+def computedVersionName = tagVersionName ?: "1.0." + computedVersionCode
+
+logger.lifecycle("Version: name=" + computedVersionName +
+        " code=" + computedVersionCode +
+        " ref=" + (githubRef.isEmpty() ? "none" : githubRef))
+
+// -----------------------------------------------------------------------------
+// Keystore env. Accept BOTH names so this file works with either workflow
+// variant (KEYSTORE_PATH is read first; KEYSTORE_FILE is a fallback).
 // -----------------------------------------------------------------------------
 def envKeystorePath  = System.getenv("KEYSTORE_PATH") ?: System.getenv("KEYSTORE_FILE")
 def envStorePassword = System.getenv("KEYSTORE_PASSWORD")
@@ -38,8 +75,8 @@ def hasReleaseKeystore = keystoreFile != null && keystoreFile.exists() &&
         envKeyPassword != null && !envKeyPassword.isEmpty()
 
 logger.lifecycle(hasReleaseKeystore
-        ? "🔐 Signing with release keystore: ${keystoreFile}"
-        : "⚠️ No release keystore found — release APK will be UNSIGNED.")
+        ? "Signing with release keystore: " + keystoreFile
+        : "No release keystore found. Release APK will be UNSIGNED.")
 
 android {
     namespace 'com.minimalbrowser'
@@ -82,7 +119,7 @@ android {
         debug {
             if (hasReleaseKeystore) {
                 // Deliberately sign debug with the release key when available,
-                // so debug ↔ release installs replace each other cleanly.
+                // so debug and release installs replace each other cleanly.
                 signingConfig signingConfigs.release
             }
             debuggable true
