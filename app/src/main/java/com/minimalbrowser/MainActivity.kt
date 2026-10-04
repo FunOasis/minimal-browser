@@ -237,11 +237,25 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     // ---------------------------------------------------------------------
 
     private fun showTabSwitcher() {
-        TabSwitcherSheet(this, tabManager).show()
+        TabSwitcherSheet(this, tabManager) { visible ->
+            if (visible) {
+                binding.footerText.visibility = View.VISIBLE
+            } else {
+                val url = tabManager.getActiveWebView()?.url ?: ""
+                updateFooterFor(url)
+            }
+        }.show()
     }
 
     private fun updateTabBadge() {
-        binding.tabBadge.text = tabManager.count().toString()
+        val active = tabManager.getActiveIndex() + 1
+        val total = tabManager.count()
+        binding.tabBadge.text = "$active/$total"
+    }
+
+    private fun updateFooterFor(url: String) {
+        binding.footerText.visibility =
+            if (url.startsWith(Prefs.HOME_URL)) View.VISIBLE else View.GONE
     }
 
     private fun showExitConfirm() {
@@ -313,6 +327,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     override fun onUrlChanged(view: WebView, url: String) {
         if (view !== tabManager.getActiveWebView()) return
+        updateFooterFor(url)
         if (binding.addressBar.hasFocus()) return
         binding.addressBar.setText(displayUrl(url))
     }
