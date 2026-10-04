@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Minimal Browser</string>
+    <string name="footer_brand">MINIMAL BROWSER</string>
 
     <string name="hint_address">Search or type URL</string>
 
@@ -10,6 +11,9 @@
     <string name="action_go">Search</string>
 
     <string name="menu_home">Home</string>
+    <string name="menu_new_tab">New tab</string>
+    <string name="menu_tabs_placeholder">Tabs</string>
+    <string name="menu_tabs">Tabs (%1$d)</string>
     <string name="menu_add_shortcut">Add to home screen</string>
     <string name="menu_toggle_js">Toggle JavaScript</string>
     <string name="menu_custom_filters">Custom filters</string>
@@ -21,8 +25,18 @@
     <string name="cd_back">Back</string>
     <string name="cd_forward">Forward</string>
     <string name="cd_menu">Menu</string>
+    <string name="cd_tabs">Open tabs</string>
+    <string name="cd_close">Close</string>
+    <string name="cd_close_tab">Close tab</string>
 
-    <!-- Custom filters dialog -->
+    <string name="tabs_title">Tabs</string>
+    <string name="tabs_new">+ New tab</string>
+    <string name="tab_untitled">New tab</string>
+
+    <string name="exit_title">Exit Minimal Browser?</string>
+    <string name="exit_message">This will close all tabs.</string>
+    <string name="exit_confirm">Exit</string>
+
     <string name="custom_filters_blocklist_label">Custom blocklist</string>
     <string name="custom_filters_blocklist_hint">One host per line. Subdomains are blocked automatically. Lines starting with # or ! are ignored.</string>
     <string name="custom_filters_patterns_label">Custom URL filters</string>
@@ -33,14 +47,12 @@
     <string name="action_save">Save</string>
     <string name="action_clear">Clear</string>
 
-    <!-- Downloads -->
     <string name="download_started">Downloading %1$s</string>
     <string name="download_failed">Download failed</string>
     <string name="download_unsupported">This type of download isn\'t supported</string>
     <string name="download_permission_denied">Storage permission required to save files</string>
     <string name="download_no_app">No downloads app found</string>
 
-    <!-- Home-screen shortcut -->
     <string name="shortcut_requested">Shortcut added to home screen</string>
     <string name="shortcut_unsupported">Your launcher doesn\'t support adding shortcuts</string>
     <string name="shortcut_needs_page">Open a page first</string>
