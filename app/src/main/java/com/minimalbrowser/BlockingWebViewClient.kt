@@ -30,6 +30,12 @@ interface BrowserUiListener {
     fun onPageLoadError(description: String, url: String?)
     /** Called when the WebView's renderer process has died. */
     fun onRenderProcessGone()
+    /**
+     * Called when a navigation target is a file that should go straight
+     * to the system download manager instead of being rendered by the
+     * WebView's built-in text / JSON / PDF viewer.
+     */
+    fun onDownloadRequested(url: String)
 }
 
 class BlockingWebViewClient(
@@ -49,6 +55,43 @@ class BlockingWebViewClient(
         private val EXTERNAL_SCHEMES = setOf(
             "mailto", "tel", "sms", "smsto", "mms", "mmsto",
             "geo", "market", "intent"
+        )
+
+        /**
+         * Extensions that we always route to the download manager, even
+         * though WebView *could* render them (as plain text, a JSON tree,
+         * a CSV table, etc.). The user's intent when tapping a .md / .zip
+         * / .apk link is "save this", not "view it in a browser tab".
+         *
+         * Deliberately NOT in this list:
+         *   • pdf, txt            → WebView's viewers are good enough
+         *   • png, jpg, webp, …   → users usually want to *see* them
+         *   • mp4, mp3, webm, …   → users usually want to *play* them
+         *
+         * If the server also sends Content-Disposition: attachment for any
+         * of the above, the DownloadListener still fires and handles it.
+         */
+        private val DOWNLOAD_EXTENSIONS = setOf(
+            // Archives
+            "zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", "zst",
+            // Packages / installers
+            "apk", "aab", "exe", "msi", "dmg", "deb", "rpm", "jar",
+            // Office documents WebView can't render
+            "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+            "odt", "ods", "odp", "rtf",
+            // Data / config — WebView renders as text, but users
+            // almost always want to *save* these instead
+            "md", "markdown",
+            "json", "xml", "csv", "tsv", "yaml", "yml", "toml", "ini",
+            // Source code
+            "js", "mjs", "cjs", "ts", "jsx", "tsx",
+            "css", "scss", "sass", "less",
+            "py", "rb", "go", "rs", "kt", "kts", "java", "scala", "swift",
+            "c", "cc", "cpp", "h", "hpp", "cs", "php",
+            "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd",
+            "sql", "graphql", "proto",
+            // Misc
+            "torrent", "iso", "img", "epub", "mobi", "azw3"
         )
 
         private fun blockedResponse(): WebResourceResponse = WebResourceResponse(
@@ -79,7 +122,20 @@ class BlockingWebViewClient(
         val scheme = uri.scheme?.lowercase() ?: return true
 
         return when (scheme) {
-            "http", "https", "about", INTERNAL_SCHEME -> false
+            "http", "https" -> {
+                // Pre-empt WebView's render-vs-download decision for
+                // known file extensions. Without this, a .md served as
+                // text/plain renders as a page and the user has to tap
+                // the viewer's download icon to actually save it.
+                if (isDownloadUrl(uri)) {
+                    ui.onDownloadRequested(uri.toString())
+                    true
+                } else {
+                    false
+                }
+            }
+
+            "about", INTERNAL_SCHEME -> false
 
             in EXTERNAL_SCHEMES -> {
                 dispatchExternal(uri)
@@ -91,6 +147,25 @@ class BlockingWebViewClient(
                 true
             }
         }
+    }
+
+    /**
+     * True when the URL's last path segment carries a file extension we
+     * want to hand straight to the download manager.
+     *
+     * Guards against false positives such as `example.com/user.john`
+     * by capping the extension at 8 alphanumeric characters.
+     */
+    private fun isDownloadUrl(uri: Uri): Boolean {
+        val last = uri.lastPathSegment ?: return false
+        val dot = last.lastIndexOf('.')
+        if (dot <= 0 || dot == last.length - 1) return false
+
+        val ext = last.substring(dot + 1).lowercase()
+        if (ext.isEmpty() || ext.length > 8) return false
+        if (!ext.all { it.isLetterOrDigit() }) return false
+
+        return ext in DOWNLOAD_EXTENSIONS
     }
 
     private fun dispatchExternal(uri: Uri) {
@@ -180,9 +255,6 @@ class BlockingWebViewClient(
      * Fires when the WebView renderer process dies (usually a GPU driver
      * crash). Returning true tells the framework we handled it — the app
      * stays alive instead of being force-closed by the system.
-     *
-     * The dead WebView can never be reused, so we detach and destroy it
-     * here and let the Activity recreate itself fresh.
      */
     override fun onRenderProcessGone(
         view: WebView?,
