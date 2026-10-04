@@ -38,6 +38,10 @@ class BlockingWebViewClient(
         private const val TAG = "BlockingWebViewClient"
         private val EMPTY_BODY = ByteArray(0)
 
+        /** Scheme used for internal sentinel URLs (currently just home). */
+        private const val INTERNAL_SCHEME = "minimal"
+        private const val HOME_URL = "minimal://home"
+
         private val EXTERNAL_SCHEMES = setOf(
             "mailto", "tel", "sms", "smsto", "mms", "mmsto",
             "geo", "market", "intent"
@@ -53,8 +57,15 @@ class BlockingWebViewClient(
         view: WebView,
         request: WebResourceRequest
     ): WebResourceResponse? {
-        if (request.isForMainFrame) return null
         val url = request.url.toString()
+
+        // Serve the built-in home page — this must run before the
+        // main-frame short-circuit below.
+        if (request.isForMainFrame && url.startsWith(HOME_URL)) {
+            return serveHomePage()
+        }
+
+        if (request.isForMainFrame) return null
         return if (blocker.isBlocked(url)) blockedResponse() else null
     }
 
@@ -66,7 +77,7 @@ class BlockingWebViewClient(
         val scheme = uri.scheme?.lowercase() ?: return true
 
         return when (scheme) {
-            "http", "https", "about" -> false
+            "http", "https", "about", INTERNAL_SCHEME -> false
 
             in EXTERNAL_SCHEMES -> {
                 dispatchExternal(uri)
@@ -88,6 +99,42 @@ class BlockingWebViewClient(
         } catch (e: ActivityNotFoundException) {
             Log.w(TAG, "No app handles ${uri.scheme}: $uri")
             ui.onPageLoadError("No app can open this link", uri.toString())
+        }
+    }
+
+    /**
+     * Reads assets/home.html and returns it as a WebResourceResponse.
+     * Falls back to a plain error page if the asset is missing so the
+     * user never sees a blank white screen.
+     */
+    private fun serveHomePage(): WebResourceResponse {
+        return try {
+            val html = appContext.assets
+                .open("home.html")
+                .bufferedReader(Charsets.UTF_8)
+                .use { it.readText() }
+
+            WebResourceResponse(
+                "text/html",
+                "utf-8",
+                200,
+                "OK",
+                mapOf("Cache-Control" to "no-cache"),
+                ByteArrayInputStream(html.toByteArray(Charsets.UTF_8))
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "home.html unreadable: ${e.message}")
+            val fallback = "<html><body style='background:#000;color:#fff;" +
+                "font-family:sans-serif;padding:32px'>" +
+                "<h2>Home page unavailable</h2></body></html>"
+            WebResourceResponse(
+                "text/html",
+                "utf-8",
+                500,
+                "Internal Error",
+                emptyMap(),
+                ByteArrayInputStream(fallback.toByteArray(Charsets.UTF_8))
+            )
         }
     }
 
