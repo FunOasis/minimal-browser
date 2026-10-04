@@ -11,23 +11,20 @@
     --text:        #FFFFFF;
     --text-2:      #8A8A8A;
     --text-3:      #5C5C5C;
-    --tile:        #131313;
-    --tile-border: #1F1F1F;
-    --surface:     #0F0F0F;
   }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; padding: 0; min-height: 100%; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
   body {
     background: #000;
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: 100vh;
-    padding: 32px 24px 56px;
+    padding: 32px 24px 24px;
   }
 
   /* ---- Brand monogram -------------------------------------------- */
@@ -37,12 +34,12 @@
     letter-spacing: 0.42em;
     color: var(--text-2);
     margin-bottom: 44px;
-    padding-left: 0.42em; /* compensate trailing spacing */
+    padding-left: 0.42em;
     user-select: none;
   }
   .brand .dot { color: var(--accent); }
 
-  /* ---- Search pill — visually echoes the app's URL bar ---------- */
+  /* ---- Search pill ----------------------------------------------- */
   .search-wrap {
     width: 100%;
     max-width: 480px;
@@ -51,14 +48,13 @@
   .search-input {
     width: 100%;
     height: 52px;
-    background: linear-gradient(180deg, #1A1A1A 0%, #0F0F0F 100%);
+    background: #1A1A1A;
     border: 1px solid #262626;
     border-radius: 26px;
     color: var(--text);
     font-size: 15px;
     padding: 0 54px 0 20px;
     outline: none;
-    transition: border-color .15s ease;
     -webkit-appearance: none;
   }
   .search-input::placeholder { color: var(--text-3); }
@@ -74,52 +70,17 @@
     display: flex; align-items: center; justify-content: center;
     cursor: pointer;
   }
-  .search-btn:active { background: rgba(255,255,255,0.06); }
   .search-btn svg { width: 20px; height: 20px; }
-
-  /* ---- Shortcut tiles -------------------------------------------- */
-  .shortcuts {
-    margin-top: 44px;
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 20px 16px;
-    width: 100%;
-    max-width: 400px;
-  }
-  .shortcut {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    text-decoration: none;
-    color: var(--text-2);
-    font-size: 11px;
-    letter-spacing: 0.04em;
-  }
-  .shortcut .tile {
-    width: 50px; height: 50px;
-    border-radius: 14px;
-    background: var(--tile);
-    border: 1px solid var(--tile-border);
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 600;
-    font-size: 17px;
-    color: var(--text);
-    transition: background .15s ease;
-  }
-  .shortcut:active .tile { background: #1B1B1B; }
 
   /* ---- Footer ---------------------------------------------------- */
   footer {
-    position: fixed;
-    bottom: 18px;
-    left: 0; right: 0;
+    margin-top: auto;
+    padding-top: 56px;
     text-align: center;
     font-size: 10px;
     letter-spacing: 0.32em;
     color: #2E2E2E;
     user-select: none;
-    pointer-events: none;
   }
 </style>
 </head>
@@ -149,26 +110,9 @@
     </form>
   </div>
 
-  <div class="shortcuts">
-    <a class="shortcut" href="https://search.brave.com/">
-      <div class="tile">B</div><span>BRAVE</span>
-    </a>
-    <a class="shortcut" href="https://github.com/">
-      <div class="tile">G</div><span>GITHUB</span>
-    </a>
-    <a class="shortcut" href="https://news.ycombinator.com/">
-      <div class="tile">Y</div><span>HN</span>
-    </a>
-    <a class="shortcut" href="https://en.wikipedia.org/">
-      <div class="tile">W</div><span>WIKI</span>
-    </a>
-  </div>
-
   <footer>MINIMAL BROWSER</footer>
 
   <script>
-    // Smart submit: if the input looks like a URL, navigate there.
-    // Otherwise fall through to the default form action (Brave).
     document.getElementById('sform').addEventListener('submit', function (e) {
       var v = document.getElementById('q').value.trim();
       if (!v) { e.preventDefault(); return; }
