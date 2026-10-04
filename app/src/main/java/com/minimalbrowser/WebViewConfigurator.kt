@@ -32,10 +32,15 @@ object WebViewConfigurator {
         s.displayZoomControls  = false
 
         // --- Security hardening -----------------------------------------
+        //
+        // allowFileAccess + allowContentAccess = false is the single
+        // switch that disables file:// and content:// URL loading. The
+        // older granular flags (allowFileAccessFromFileURLs,
+        // allowUniversalAccessFromFileURLs) were deprecated in API 30
+        // and now have no effect whenever allowFileAccess is false —
+        // which is exactly our case. So we don't set them anymore.
         s.allowFileAccess = false
         s.allowContentAccess = false
-        s.allowFileAccessFromFileURLs = false
-        s.allowUniversalAccessFromFileURLs = false
 
         s.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
 
