@@ -51,7 +51,6 @@
     <style name="Widget.MinimalBrowser.PopupMenu" parent="Widget.AppCompat.PopupMenu">
         <item name="android:popupBackground">@drawable/bg_popup_glass</item>
         <item name="android:popupElevation">10dp</item>
-        <item name="android:popupAnimationStyle">@android:style/Animation.DropDownPopupWindow</item>
     </style>
 
     <style name="ThemeOverlay.MinimalBrowser.PopupMenu" parent="ThemeOverlay.AppCompat.Dark">
