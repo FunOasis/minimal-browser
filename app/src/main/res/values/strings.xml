@@ -12,6 +12,7 @@
     <string name="menu_home">Home</string>
     <string name="menu_toggle_js">Toggle JavaScript</string>
     <string name="menu_clear">Clear cache</string>
+    <string name="menu_exit">Exit</string>
 
     <string name="address_hint">Search or type URL</string>
     <string name="cd_back">Back</string>
