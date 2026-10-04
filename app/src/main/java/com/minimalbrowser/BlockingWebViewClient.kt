@@ -7,6 +7,8 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.net.http.SslError
 import android.util.Log
+import android.view.ViewGroup
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.SslErrorHandler
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -26,6 +28,8 @@ interface BrowserUiListener {
     fun onPageLoadStarted()
     fun onPageLoadFinished()
     fun onPageLoadError(description: String, url: String?)
+    /** Called when the WebView's renderer process has died. */
+    fun onRenderProcessGone()
 }
 
 class BlockingWebViewClient(
@@ -59,8 +63,6 @@ class BlockingWebViewClient(
     ): WebResourceResponse? {
         val url = request.url.toString()
 
-        // Serve the built-in home page — this must run before the
-        // main-frame short-circuit below.
         if (request.isForMainFrame && url.startsWith(HOME_URL)) {
             return serveHomePage()
         }
@@ -102,11 +104,6 @@ class BlockingWebViewClient(
         }
     }
 
-    /**
-     * Reads assets/home.html and returns it as a WebResourceResponse.
-     * Falls back to a plain error page if the asset is missing so the
-     * user never sees a blank white screen.
-     */
     private fun serveHomePage(): WebResourceResponse {
         return try {
             val html = appContext.assets
@@ -177,5 +174,26 @@ class BlockingWebViewClient(
     ) {
         Log.w(TAG, "SSL error, refusing to proceed: ${error?.primaryError}")
         handler.cancel()
+    }
+
+    /**
+     * Fires when the WebView renderer process dies (usually a GPU driver
+     * crash). Returning true tells the framework we handled it — the app
+     * stays alive instead of being force-closed by the system.
+     *
+     * The dead WebView can never be reused, so we detach and destroy it
+     * here and let the Activity recreate itself fresh.
+     */
+    override fun onRenderProcessGone(
+        view: WebView?,
+        detail: RenderProcessGoneDetail?
+    ): Boolean {
+        Log.w(TAG, "Render process gone. Crashed=${detail?.didCrash()}")
+        if (view != null) {
+            (view.parent as? ViewGroup)?.removeView(view)
+            view.destroy()
+        }
+        ui.onRenderProcessGone()
+        return true
     }
 }
