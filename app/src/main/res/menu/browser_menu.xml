@@ -7,6 +7,9 @@
         android:id="@+id/action_js"
         android:title="@string/menu_toggle_js" />
     <item
+        android:id="@+id/action_custom_filters"
+        android:title="@string/menu_custom_filters" />
+    <item
         android:id="@+id/action_clear"
         android:title="@string/menu_clear" />
     <item
