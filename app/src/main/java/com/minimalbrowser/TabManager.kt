@@ -10,22 +10,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 
-/**
- * Owns every WebView in the browser session.
- *
- * Architecture: N WebViews live inside a single FrameLayout container; only
- * the active one is VISIBLE. Switching tabs is a visibility toggle, so pages
- * keep their DOM, scroll position, and history live while inactive.
- *
- * Eviction: capped at MAX_TABS (6) live tabs. When a new tab is created past
- * the cap, the least-recently-used *non-active* tab is fully closed (WebView
- * destroyed, entry removed). This is LRU, not FIFO: if you bounce back to an
- * old tab before opening a new one, the tab you last used longest ago gets
- * evicted, not necessarily the oldest.
- *
- * Threading: all methods must be called from the main thread (WebView
- * construction and destroy are main-thread-only operations).
- */
 class TabManager(
     private val activity: MainActivity,
     private val container: FrameLayout,
@@ -38,7 +22,6 @@ class TabManager(
 ) {
 
     companion object {
-        /** Live-tab cap. LRU eviction fires when a new tab would exceed this. */
         const val MAX_TABS = 6
     }
 
@@ -56,19 +39,11 @@ class TabManager(
     private var activeIndex = 0
     private var nextId = 1L
 
-    // ---------------------------------------------------------------------
-    // Public API
-    // ---------------------------------------------------------------------
-
     fun count(): Int = _tabs.size
     fun getActiveIndex(): Int = activeIndex
     fun getActive(): Tab? = _tabs.getOrNull(activeIndex)
     fun getActiveWebView(): WebView? = getActive()?.webView
 
-    /**
-     * Creates a new tab, loads url in it, and (by default) makes it active.
-     * If the live-tab cap is reached, the LRU non-active tab is closed first.
-     */
     fun create(url: String = Prefs.HOME_URL, makeActive: Boolean = true): Tab {
         evictForSpace()
 
@@ -93,11 +68,6 @@ class TabManager(
         return tab
     }
 
-    /**
-     * Closes the tab at index. Refuses to close the last remaining tab — the
-     * caller (MainActivity) is responsible for showing the exit confirmation
-     * when only one tab remains and back is pressed with no history left.
-     */
     fun closeTab(index: Int) {
         if (index !in _tabs.indices) return
         if (_tabs.size <= 1) return
@@ -139,23 +109,18 @@ class TabManager(
         _tabs.clear()
     }
 
-    /** Called by MainActivity.onTrimMemory — frees each WebView's disk cache. */
     fun trimAllCaches() {
         for (tab in _tabs) {
             tab.webView?.clearCache(false)
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Internals
-    // ---------------------------------------------------------------------
-
     private fun evictForSpace() {
         while (_tabs.size >= MAX_TABS) {
             val candidate = _tabs.indices
                 .filter { it != activeIndex }
                 .minByOrNull { _tabs[it].lastUsedAt }
-                ?: return  // only one tab and we can't evict it; cap can't be reached
+                ?: return
             destroyTabAt(candidate)
             if (candidate < activeIndex) activeIndex--
         }
@@ -170,7 +135,6 @@ class TabManager(
     private fun destroyWebView(wv: WebView) {
         (wv.parent as? ViewGroup)?.removeView(wv)
         wv.stopLoading()
-        wv.loadUrl("about:blank")
         wv.removeAllViews()
         wv.destroy()
     }
@@ -181,7 +145,6 @@ class TabManager(
         }
     }
 
-    /** Pushes the active tab's URL and nav state into the address bar / buttons. */
     private fun syncActiveUi() {
         val tab = getActive() ?: return
         val wv = tab.webView ?: return
@@ -221,11 +184,6 @@ class TabManager(
         return wv
     }
 
-    /**
-     * Per-tab WebChromeClient. Feeds title/favicon/progress into the owning
-     * Tab, and notifies MainActivity only when the callback comes from the
-     * active tab. Also intercepts target=_blank via onCreateWindow.
-     */
     private inner class TabWebChromeClient(private val tab: Tab) : WebChromeClient() {
 
         override fun onProgressChanged(view: WebView?, newProgress: Int) {
@@ -242,13 +200,6 @@ class TabManager(
             if (tab === getActive()) onFavicon(icon)
         }
 
-        /**
-         * target=_blank and window.open() land here. Chromium hands us a
-         * Message containing a WebViewTransport; we supply a throwaway
-         * WebView as the transport target, which then immediately fires
-         * shouldOverrideUrlLoading with the real URL. We intercept there,
-         * open a proper new tab, and never let the throwaway render.
-         */
         override fun onCreateWindow(
             view: WebView?,
             isDialog: Boolean,
