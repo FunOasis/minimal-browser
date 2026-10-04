@@ -5,6 +5,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Required only on API 26-28 to write downloads into the public
+         Downloads folder. On API 29+ scoped storage lets DownloadManager
+         write there without any runtime permission, so we cap the
+         declaration at API 28 to avoid triggering Play Store warnings. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
     <application
         android:name=".MinimalBrowserApp"
         android:allowBackup="false"
