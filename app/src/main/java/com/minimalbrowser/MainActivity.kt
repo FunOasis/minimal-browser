@@ -10,9 +10,7 @@ import android.view.ContextThemeWrapper
 import android.view.KeyEvent
 import android.view.MenuItem
 import android.view.View
-import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
-import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.widget.EditText
 import android.widget.PopupMenu
@@ -29,10 +27,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     private lateinit var binding: ActivityMainBinding
     private lateinit var blocker: AdBlocker
     private lateinit var prefs: Prefs
-
-    /** Live page title + favicon, kept so the shortcut builder can use them. */
-    private var currentTitle: String = ""
-    private var currentFavicon: Bitmap? = null
+    private lateinit var tabManager: TabManager
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,30 +38,19 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         blocker = AdBlocker.get(this)
         prefs   = Prefs.get(this)
 
-        WebViewConfigurator.apply(binding.webView, prefs.javaScriptEnabled)
-
-        binding.webView.webViewClient = BlockingWebViewClient(
+        tabManager = TabManager(
+            activity = this,
+            container = binding.webViewContainer,
+            prefs = prefs,
             blocker = blocker,
-            appContext = applicationContext,
-            ui = this
-        )
-
-        binding.webView.webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                binding.progressBar.progress = newProgress
+            ui = this,
+            onProgress = { p ->
+                binding.progressBar.progress = p
                 binding.progressBar.visibility =
-                    if (newProgress in 1..99) View.VISIBLE else View.GONE
-                if (newProgress == 100) binding.swipeRefresh.isRefreshing = false
-            }
-
-            override fun onReceivedTitle(view: WebView?, title: String?) {
-                super.onReceivedTitle(view, title)
-                currentTitle = title ?: ""
-            }
-
-            override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
-                super.onReceivedIcon(view, icon)
-                currentFavicon = icon
+                    if (p in 1..99) View.VISIBLE else View.GONE
+                if (p == 100) binding.swipeRefresh.isRefreshing = false
+            },
+            onFavicon = { icon ->
                 if (icon == null) {
                     binding.favicon.setImageDrawable(null)
                     binding.favicon.visibility = View.GONE
@@ -74,30 +58,26 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
                     binding.favicon.setImageBitmap(icon)
                     binding.favicon.visibility = View.VISIBLE
                 }
-            }
-        }
+            },
+            onTabsChanged = { updateTabBadge() }
+        )
 
-        binding.webView.setDownloadListener {
-                url, userAgent, contentDisposition, mimeType, contentLength ->
-            DownloadHandler.handle(
-                activity = this,
-                url = url,
-                userAgent = userAgent,
-                contentDisposition = contentDisposition,
-                mimeType = mimeType,
-                contentLength = contentLength
-            )
+        binding.swipeRefresh.setOnRefreshListener { tabManager.reloadActive() }
+        binding.swipeRefresh.setOnChildScrollUpCallback { _, _ ->
+            val wv = tabManager.getActiveWebView() ?: return@setOnChildScrollUpCallback false
+            wv.canScrollVertically(-1)
         }
-
-        binding.swipeRefresh.setOnRefreshListener { binding.webView.reload() }
 
         binding.btnBack.setOnClickListener {
-            if (binding.webView.canGoBack()) binding.webView.goBack()
+            val wv = tabManager.getActiveWebView()
+            if (wv != null && wv.canGoBack()) wv.goBack()
         }
         binding.btnForward.setOnClickListener {
-            if (binding.webView.canGoForward()) binding.webView.goForward()
+            val wv = tabManager.getActiveWebView()
+            if (wv != null && wv.canGoForward()) wv.goForward()
         }
         binding.btnMenu.setOnClickListener { showOverflowMenu(it) }
+        binding.tabBadge.setOnClickListener { showTabSwitcher() }
 
         binding.addressBar.setOnEditorActionListener { _, actionId, event ->
             val isGo = actionId == EditorInfo.IME_ACTION_GO ||
@@ -113,60 +93,46 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (binding.webView.canGoBack()) {
-                    binding.webView.goBack()
-                } else {
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
+                val wv = tabManager.getActiveWebView()
+                if (wv != null && wv.canGoBack()) {
+                    wv.goBack()
+                    return
                 }
+                if (tabManager.count() > 1) {
+                    tabManager.closeTab(tabManager.getActiveIndex())
+                    return
+                }
+                showExitConfirm()
             }
         })
 
-        // Cold-start routing:
-        //   1. Config change / process restore → WebView restores itself.
-        //   2. Launched from a home-screen shortcut → load that URL.
-        //   3. Launched normally → home page.
-        if (savedInstanceState != null) {
-            intent?.removeExtra(EXTRA_SHORTCUT_URL)
-            binding.webView.restoreState(savedInstanceState)
+        val shortcutUrl = intent?.getStringExtra(EXTRA_SHORTCUT_URL)
+        if (!shortcutUrl.isNullOrBlank()) {
+            intent.removeExtra(EXTRA_SHORTCUT_URL)
+            tabManager.create(url = shortcutUrl)
         } else {
-            val shortcutUrl = intent?.getStringExtra(EXTRA_SHORTCUT_URL)
-            if (!shortcutUrl.isNullOrBlank()) {
-                intent.removeExtra(EXTRA_SHORTCUT_URL)
-                loadUrl(shortcutUrl)
-            } else {
-                loadHome()
-            }
+            tabManager.create()
         }
-
-        refreshNavButtons()
     }
 
-    /**
-     * Fires when a shortcut launches us while MainActivity is already at the
-     * top of the stack (launchMode=singleTop). A shortcut tap is a fresh
-     * page load — we don't want the previous tab's WebView state.
-     */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-
         val url = intent.getStringExtra(EXTRA_SHORTCUT_URL)
         intent.removeExtra(EXTRA_SHORTCUT_URL)
         if (!url.isNullOrBlank()) {
-            loadUrl(url)
+            val active = tabManager.getActiveWebView()
+            if (active != null) {
+                active.loadUrl(url)
+                binding.addressBar.setText(displayUrl(url))
+            }
         }
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        binding.webView.saveState(outState)
     }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
-            binding.webView.clearCache(false)
+            tabManager.trimAllCaches()
         }
     }
 
@@ -180,17 +146,12 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     override fun onDestroy() {
-        with(binding.webView) {
-            stopLoading()
-            (parent as? ViewGroup)?.removeView(this)
-            removeAllViews()
-            destroy()
-        }
+        tabManager.destroyAll()
         super.onDestroy()
     }
 
     // ---------------------------------------------------------------------
-    // Overflow menu
+    // Menu
     // ---------------------------------------------------------------------
 
     private fun showOverflowMenu(anchor: View) {
@@ -200,12 +161,26 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         )
         val popup = PopupMenu(themedContext, anchor)
         popup.menuInflater.inflate(R.menu.browser_menu, popup.menu)
+
+        val tabsItem = popup.menu.findItem(R.id.action_tabs)
+        tabsItem?.title = getString(R.string.menu_tabs, tabManager.count())
+
         popup.setOnMenuItemClickListener { item -> handleMenu(item) }
         popup.show()
     }
 
     private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {
         R.id.action_home -> { loadHome(); true }
+
+        R.id.action_new_tab -> {
+            tabManager.create()
+            true
+        }
+
+        R.id.action_tabs -> {
+            showTabSwitcher()
+            true
+        }
 
         R.id.action_add_shortcut -> {
             addCurrentPageShortcut()
@@ -214,11 +189,13 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
         R.id.action_js -> {
             prefs.javaScriptEnabled = !prefs.javaScriptEnabled
-            binding.webView.settings.javaScriptEnabled = prefs.javaScriptEnabled
-            binding.webView.reload()
+            tabManager.tabs.forEach { tab ->
+                tab.webView?.settings?.javaScriptEnabled = prefs.javaScriptEnabled
+                tab.webView?.reload()
+            }
             Toast.makeText(
                 this,
-                "JavaScript: ${if (prefs.javaScriptEnabled) "ON" else "OFF"}",
+                "JavaScript: " + (if (prefs.javaScriptEnabled) "ON" else "OFF"),
                 Toast.LENGTH_SHORT
             ).show()
             true
@@ -239,8 +216,10 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
 
         R.id.action_clear -> {
-            binding.webView.clearHistory()
-            binding.webView.clearCache(true)
+            tabManager.tabs.forEach { tab ->
+                tab.webView?.clearHistory()
+                tab.webView?.clearCache(true)
+            }
             Toast.makeText(this, "Cache cleared", Toast.LENGTH_SHORT).show()
             true
         }
@@ -254,30 +233,40 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     // ---------------------------------------------------------------------
-    // Add-to-home-screen
+    // Tab switcher / exit confirm / custom filters / shortcut
     // ---------------------------------------------------------------------
 
-    /**
-     * Pin a launcher shortcut for the currently displayed page.
-     *
-     * The WebView can report a null URL or the internal home sentinel
-     * while a page is still committing, so we bail with a toast rather
-     * than pinning a useless shortcut.
-     */
+    private fun showTabSwitcher() {
+        TabSwitcherSheet(this, tabManager).show()
+    }
+
+    private fun updateTabBadge() {
+        binding.tabBadge.text = tabManager.count().toString()
+    }
+
+    private fun showExitConfirm() {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.exit_title)
+            .setMessage(R.string.exit_message)
+            .setPositiveButton(R.string.exit_confirm) { _, _ -> finishAndRemoveTask() }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     private fun addCurrentPageShortcut() {
-        val url = binding.webView.url
+        val wv = tabManager.getActiveWebView() ?: return
+        val url = wv.url
         if (url.isNullOrBlank() || url.startsWith("minimal://")) {
             Toast.makeText(this, R.string.shortcut_needs_page, Toast.LENGTH_SHORT).show()
             return
         }
-
+        val tab = tabManager.findByWebView(wv)
         val result = ShortcutHelper.requestPin(
             context = this,
             url = url,
-            title = currentTitle.ifBlank { binding.webView.title.orEmpty() },
-            favicon = currentFavicon
+            title = (tab?.title ?: wv.title).orEmpty(),
+            favicon = tab?.favicon
         )
-
         val msgRes = when (result) {
             ShortcutHelper.Result.PINNED      -> R.string.shortcut_requested
             ShortcutHelper.Result.UNSUPPORTED -> R.string.shortcut_unsupported
@@ -285,10 +274,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
         Toast.makeText(this, msgRes, Toast.LENGTH_SHORT).show()
     }
-
-    // ---------------------------------------------------------------------
-    // Custom filters dialog
-    // ---------------------------------------------------------------------
 
     private fun showCustomFiltersDialog() {
         val view = layoutInflater.inflate(R.layout.dialog_custom_filters, null)
@@ -322,48 +307,54 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     // ---------------------------------------------------------------------
-    // BrowserUiListener
+    // BrowserUiListener — all callbacks carry the originating WebView so we
+    // can ignore events from inactive tabs.
     // ---------------------------------------------------------------------
 
-    override fun onUrlChanged(url: String) {
+    override fun onUrlChanged(view: WebView, url: String) {
+        if (view !== tabManager.getActiveWebView()) return
         if (binding.addressBar.hasFocus()) return
         binding.addressBar.setText(displayUrl(url))
     }
 
-    override fun onNavStateChanged(canGoBack: Boolean, canGoForward: Boolean) {
+    override fun onNavStateChanged(view: WebView, canGoBack: Boolean, canGoForward: Boolean) {
+        if (view !== tabManager.getActiveWebView()) return
         binding.btnBack.isEnabled    = canGoBack
         binding.btnForward.isEnabled = canGoForward
     }
 
-    override fun onPageLoadStarted() {
+    override fun onPageLoadStarted(view: WebView) {
+        if (view !== tabManager.getActiveWebView()) return
         binding.progressBar.progress = 0
         binding.progressBar.visibility = View.VISIBLE
     }
 
-    override fun onPageLoadFinished() {
+    override fun onPageLoadFinished(view: WebView) {
+        if (view !== tabManager.getActiveWebView()) return
         binding.swipeRefresh.isRefreshing = false
     }
 
-    override fun onPageLoadError(description: String, url: String?) {
+    override fun onPageLoadError(view: WebView?, description: String, url: String?) {
+        if (view != null && view !== tabManager.getActiveWebView()) return
         binding.progressBar.visibility = View.GONE
         binding.swipeRefresh.isRefreshing = false
         binding.favicon.setImageDrawable(null)
         binding.favicon.visibility = View.GONE
-        binding.webView.loadDataWithBaseURL(
+        view?.loadDataWithBaseURL(
             null, errorPageHtml(description, url), "text/html", "utf-8", null
         )
     }
 
-    override fun onRenderProcessGone() {
-        Toast.makeText(this, "Renderer crashed — restarting", Toast.LENGTH_SHORT).show()
+    override fun onRenderProcessGone(view: WebView) {
+        Toast.makeText(this, "Renderer crashed - restarting", Toast.LENGTH_SHORT).show()
         recreate()
     }
 
-    override fun onDownloadRequested(url: String) {
+    override fun onDownloadRequested(view: WebView, url: String) {
         DownloadHandler.handle(
             activity = this,
             url = url,
-            userAgent = binding.webView.settings.userAgentString,
+            userAgent = view.settings.userAgentString,
             contentDisposition = null,
             mimeType = null,
             contentLength = -1L
@@ -374,36 +365,22 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     // Helpers
     // ---------------------------------------------------------------------
 
-    private fun refreshNavButtons() {
-        binding.btnBack.isEnabled    = binding.webView.canGoBack()
-        binding.btnForward.isEnabled = binding.webView.canGoForward()
-    }
-
     private fun loadHome() {
+        val wv = tabManager.getActiveWebView() ?: return
         binding.addressBar.setText("")
-        binding.webView.loadUrl(Prefs.HOME_URL)
-    }
-
-    /**
-     * Load an arbitrary URL and reflect it in the address bar immediately,
-     * so a shortcut tap feels instant even before the page commits.
-     */
-    private fun loadUrl(url: String) {
-        binding.addressBar.setText(displayUrl(url))
-        binding.progressBar.progress = 0
-        binding.progressBar.visibility = View.VISIBLE
-        binding.webView.loadUrl(url)
+        wv.loadUrl(Prefs.HOME_URL)
     }
 
     private fun displayUrl(url: String): String =
         if (url.startsWith("minimal://")) "" else url
 
     private fun navigate() {
+        val wv = tabManager.getActiveWebView() ?: return
         val input = binding.addressBar.text.toString().trim()
         if (input.isEmpty()) return
         binding.progressBar.progress = 0
         binding.progressBar.visibility = View.VISIBLE
-        binding.webView.loadUrl(normalize(input))
+        wv.loadUrl(normalize(input))
         binding.addressBar.clearFocus()
     }
 
@@ -439,10 +416,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     companion object {
-        /**
-         * Extra key for launching MainActivity straight into a specific URL,
-         * used by home-screen shortcuts created via ShortcutHelper.
-         */
         const val EXTRA_SHORTCUT_URL = "com.minimalbrowser.EXTRA_SHORTCUT_URL"
     }
 }
