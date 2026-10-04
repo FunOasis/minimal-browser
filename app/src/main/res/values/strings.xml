@@ -13,9 +13,21 @@
     <string name="menu_toggle_js">Toggle JavaScript</string>
     <string name="menu_clear">Clear cache</string>
     <string name="menu_exit">Exit</string>
+    <string name="menu_custom_filters">Custom filters</string>
 
     <string name="address_hint">Search or type URL</string>
     <string name="cd_back">Back</string>
     <string name="cd_forward">Forward</string>
     <string name="cd_menu">Menu</string>
+
+    <!-- Custom filters dialog -->
+    <string name="custom_filters_blocklist_label">Custom blocklist</string>
+    <string name="custom_filters_blocklist_hint">One host per line. Subdomains are blocked automatically. Lines starting with # or ! are ignored.</string>
+    <string name="custom_filters_patterns_label">Custom URL filters</string>
+    <string name="custom_filters_patterns_hint">One keyword per line. Any request URL containing it is blocked.</string>
+    <string name="custom_filters_stats">Active: %1$d hosts, %2$d patterns</string>
+    <string name="custom_filters_saved">Custom filters saved</string>
+    <string name="custom_filters_cleared">Custom filters cleared</string>
+    <string name="action_save">Save</string>
+    <string name="action_clear">Clear</string>
 </resources>
