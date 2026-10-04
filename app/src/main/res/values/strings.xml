@@ -11,9 +11,10 @@
 
     <string name="menu_home">Home</string>
     <string name="menu_toggle_js">Toggle JavaScript</string>
+    <string name="menu_custom_filters">Custom filters</string>
+    <string name="menu_downloads">Downloads</string>
     <string name="menu_clear">Clear cache</string>
     <string name="menu_exit">Exit</string>
-    <string name="menu_custom_filters">Custom filters</string>
 
     <string name="address_hint">Search or type URL</string>
     <string name="cd_back">Back</string>
@@ -30,4 +31,11 @@
     <string name="custom_filters_cleared">Custom filters cleared</string>
     <string name="action_save">Save</string>
     <string name="action_clear">Clear</string>
+
+    <!-- Downloads -->
+    <string name="download_started">Downloading %1$s</string>
+    <string name="download_failed">Download failed</string>
+    <string name="download_unsupported">This type of download isn\'t supported</string>
+    <string name="download_permission_denied">Storage permission required to save files</string>
+    <string name="download_no_app">No downloads app found</string>
 </resources>
