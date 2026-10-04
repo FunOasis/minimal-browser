@@ -16,7 +16,8 @@ import android.widget.TextView
 
 class TabSwitcherSheet(
     private val context: Context,
-    private val tabManager: TabManager
+    private val tabManager: TabManager,
+    private val onVisibilityChanged: (Boolean) -> Unit = {}
 ) {
 
     private var dialog: Dialog? = null
@@ -55,7 +56,10 @@ class TabSwitcherSheet(
             d.dismiss()
         }
 
+        d.setOnDismissListener { onVisibilityChanged(false) }
+
         d.show()
+        onVisibilityChanged(true)
         dialog = d
     }
 
@@ -110,7 +114,7 @@ class TabSwitcherSheet(
         title.text = tab.title.ifBlank {
             hostLabel(tab.url).ifBlank { context.getString(R.string.tab_untitled) }
         }
-        url.text = tab.url
+        url.text = displayUrl(tab.url)
 
         if (tab.favicon != null) {
             favicon.setImageBitmap(tab.favicon)
@@ -148,5 +152,10 @@ class TabSwitcherSheet(
             .getOrNull()
             ?.removePrefix("www.")
             .orEmpty()
+    }
+
+    private fun displayUrl(url: String): String {
+        if (url.startsWith("minimal://")) return context.getString(R.string.tab_untitled)
+        return url
     }
 }
