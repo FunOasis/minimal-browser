@@ -12,10 +12,13 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.webkit.WebChromeClient
 import android.webkit.WebView
+import android.widget.EditText
 import android.widget.PopupMenu
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.minimalbrowser.databinding.ActivityMainBinding
 import java.net.URLEncoder
 
@@ -109,16 +112,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.webView.saveState(outState)
     }
 
-    /**
-     * React to system memory pressure. The WebView's in-memory resource
-     * cache is by far the biggest reclaimable buffer we own, and it can
-     * be rebuilt transparently on the next page load. We only clear when
-     * the system is telling us it's actually short on RAM (RUNNING_LOW
-     * and above) — clearing on every callback would tank performance.
-     *
-     * Note: clearCache(false) keeps disk cache intact. Only memory is
-     * dropped.
-     */
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
@@ -166,6 +159,11 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             true
         }
 
+        R.id.action_custom_filters -> {
+            showCustomFiltersDialog()
+            true
+        }
+
         R.id.action_clear -> {
             binding.webView.clearHistory()
             binding.webView.clearCache(true)
@@ -179,6 +177,54 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
 
         else -> false
+    }
+
+    // ---------------------------------------------------------------------
+    // Custom filters dialog
+    // ---------------------------------------------------------------------
+
+    /**
+     * Opens the Custom filters dialog.
+     *
+     * Two text areas — one for hosts, one for URL keywords. On Save we
+     * persist to Prefs and call blocker.reloadCustomRules(), which
+     * merges the new rules on a background thread and hot-swaps the
+     * matcher. Clear wipes both fields and reverts to just the built-in
+     * assets. Cancel leaves prefs untouched.
+     *
+     * The stats line shows the *currently active* rule counts so the
+     * user can verify the merge landed (reopen the dialog after Save to
+     * see the updated numbers).
+     */
+    private fun showCustomFiltersDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_custom_filters, null)
+        val editBlocklist = view.findViewById<EditText>(R.id.editBlocklist)
+        val editPatterns  = view.findViewById<EditText>(R.id.editPatterns)
+        val statsView     = view.findViewById<TextView>(R.id.customFilterStats)
+
+        editBlocklist.setText(prefs.customBlocklist)
+        editPatterns.setText(prefs.customFilters)
+
+        val s = blocker.stats()
+        statsView.text = getString(R.string.custom_filters_stats, s.hosts, s.patterns)
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.menu_custom_filters)
+            .setView(view)
+            .setPositiveButton(R.string.action_save) { _, _ ->
+                prefs.customBlocklist = editBlocklist.text.toString()
+                prefs.customFilters   = editPatterns.text.toString()
+                blocker.reloadCustomRules()
+                Toast.makeText(this, R.string.custom_filters_saved, Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton(R.string.action_clear) { _, _ ->
+                prefs.customBlocklist = ""
+                prefs.customFilters   = ""
+                blocker.reloadCustomRules()
+                Toast.makeText(this, R.string.custom_filters_cleared, Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     // ---------------------------------------------------------------------
