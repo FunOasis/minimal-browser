@@ -4,6 +4,12 @@
         android:id="@+id/action_home"
         android:title="@string/menu_home" />
     <item
+        android:id="@+id/action_new_tab"
+        android:title="@string/menu_new_tab" />
+    <item
+        android:id="@+id/action_tabs"
+        android:title="@string/menu_tabs_placeholder" />
+    <item
         android:id="@+id/action_add_shortcut"
         android:title="@string/menu_add_shortcut" />
     <item
