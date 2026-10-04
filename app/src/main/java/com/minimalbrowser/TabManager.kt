@@ -129,6 +129,7 @@ class TabManager(
 
     private fun destroyTabAt(index: Int) {
         val tab = _tabs.removeAt(index)
+        tab.webView?.url?.let { live -> if (live.isNotBlank()) tab.url = live }
         tab.webView?.let { destroyWebView(it) }
         tab.webView = null
     }
@@ -150,6 +151,7 @@ class TabManager(
         val tab = getActive() ?: return
         val wv = tab.webView ?: return
         val url = wv.url ?: tab.url
+        if (url.isNotBlank()) tab.url = url
         ui.onUrlChanged(wv, url)
         ui.onNavStateChanged(wv, wv.canGoBack(), wv.canGoForward())
         onFavicon(tab.favicon)
@@ -189,11 +191,13 @@ class TabManager(
     private inner class TabWebChromeClient(private val tab: Tab) : WebChromeClient() {
 
         override fun onProgressChanged(view: WebView?, newProgress: Int) {
+            view?.url?.let { live -> if (live.isNotBlank()) tab.url = live }
             if (tab === getActive()) onProgress(newProgress)
         }
 
         override fun onReceivedTitle(view: WebView?, title: String?) {
             tab.title = title.orEmpty()
+            view?.url?.let { live -> if (live.isNotBlank()) tab.url = live }
             if (tab === getActive()) onTabsChanged()
         }
 
