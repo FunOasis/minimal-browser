@@ -13,8 +13,6 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <!-- ===================== Subscriptions ===================== -->
-
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -48,8 +46,6 @@
             android:textColor="@color/text_primary"
             android:textColorHint="@color/text_tertiary"
             android:textSize="13sp" />
-
-        <!-- ===================== Blocklist ===================== -->
 
         <TextView
             android:layout_width="match_parent"
@@ -85,8 +81,6 @@
             android:textColorHint="@color/text_tertiary"
             android:textSize="13sp" />
 
-        <!-- ===================== Patterns ===================== -->
-
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -120,8 +114,6 @@
             android:textColor="@color/text_primary"
             android:textColorHint="@color/text_tertiary"
             android:textSize="13sp" />
-
-        <!-- ===================== Stats ===================== -->
 
         <TextView
             android:id="@+id/customFilterStats"
