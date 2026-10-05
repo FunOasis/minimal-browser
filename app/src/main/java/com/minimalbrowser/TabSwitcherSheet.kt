@@ -17,7 +17,8 @@ import android.widget.TextView
 class TabSwitcherSheet(
     private val context: Context,
     private val tabManager: TabManager,
-    private val onVisibilityChanged: (Boolean) -> Unit = {}
+    private val onVisibilityChanged: (Boolean) -> Unit = {},
+    private val onLastTabCloseRequested: () -> Unit = {}
 ) {
 
     private var dialog: Dialog? = null
@@ -135,7 +136,17 @@ class TabSwitcherSheet(
         }
 
         close.setOnClickListener {
+            // Bug 2 fix: closing the last remaining tab is not a silent
+            // no-op. Dismiss the sheet and hand control back to the
+            // activity, which will raise the exit-confirm dialog.
+            if (tabManager.count() <= 1) {
+                dismiss()
+                onLastTabCloseRequested()
+                return@setOnClickListener
+            }
+
             tabManager.closeTab(index)
+
             if (tabManager.count() <= 1) {
                 dismiss()
             } else {
