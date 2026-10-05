@@ -28,6 +28,7 @@
     <string name="cd_tabs">Open tabs</string>
     <string name="cd_close">Close</string>
     <string name="cd_close_tab">Close tab</string>
+    <string name="cd_remove_warehouse_list">Remove list</string>
 
     <string name="tabs_title">Tabs</string>
     <string name="tabs_new">+ New tab</string>
@@ -37,14 +38,18 @@
     <string name="exit_message">This will close all tabs.</string>
     <string name="exit_confirm">Exit</string>
 
-    <string name="custom_filters_subscriptions_label">Subscription blocklists</string>
-    <string name="custom_filters_subscriptions_hint">One URL per line. Each is downloaded and parsed as a host list. Defaults point to Blocklist Project.</string>
+    <string name="custom_filters_subscriptions_label">Add subscription URLs</string>
+    <string name="custom_filters_subscriptions_hint">One URL per line. Each is downloaded, parsed, and stored as a private ZIP in the app warehouse. Lines starting with # or ! are ignored.</string>
+
+    <string name="custom_filters_warehouse_label">Warehouse</string>
+    <string name="custom_filters_warehouse_empty">No lists cached yet. Paste URLs above and press Save.</string>
+
     <string name="custom_filters_blocklist_label">Custom blocklist</string>
     <string name="custom_filters_blocklist_hint">One hostname per line. Subdomains are blocked automatically. Lines starting with # or ! are ignored.</string>
     <string name="custom_filters_patterns_label">Custom URL patterns</string>
     <string name="custom_filters_patterns_hint">One URL substring per line. Any request whose URL contains it is blocked. Example: /ads/ or track?</string>
     <string name="custom_filters_stats">Active: %1$d hosts, %2$d patterns</string>
-    <string name="custom_filters_saved">Filters saved. Refreshing subscriptions.</string>
+    <string name="custom_filters_saved">Filters saved.</string>
     <string name="custom_filters_cleared">Filters cleared</string>
     <string name="action_save">Save</string>
     <string name="action_clear">Clear</string>
