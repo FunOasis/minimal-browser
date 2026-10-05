@@ -24,10 +24,17 @@ import java.util.zip.ZipOutputStream
  * private storage at filesDir/blocklists/. A sidecar manifest.json
  * records one entry per list.
  *
- * Failure preservation: a failed refresh does NOT wipe the previous
- * good entry. The ZIP on disk is left untouched so blocking keeps
- * working; only lastAttemptAt and error are updated. Retry backoff
- * prevents hammering a down server.
+ * Behaviour guarantees:
+ *  - Failure preservation: a failed refresh does NOT wipe a previous
+ *    good entry. The ZIP on disk is left untouched so blocking keeps
+ *    working; only lastAttemptAt and error are updated.
+ *  - Retry backoff: a freshly failed attempt sets a 30 minute quiet
+ *    window so we do not hammer a down server on every launch.
+ *  - Conditional GET: refresh sends If-None-Match and If-Modified-Since
+ *    when validators are known. On 304 the body is not downloaded and
+ *    the trie is not rebuilt -- only the timestamps are bumped.
+ *  - Hardened download: manual redirect handling (max 5 hops) and a
+ *    20 MB response cap so a broken URL cannot exhaust memory.
  */
 class BlocklistStore private constructor(private val appContext: Context) {
 
@@ -39,7 +46,9 @@ class BlocklistStore private constructor(private val appContext: Context) {
         val lastFetched: Long,
         val lastAttemptAt: Long,
         val ok: Boolean,
-        val error: String?
+        val error: String?,
+        val etag: String?,
+        val lastModified: String?
     )
 
     data class RefreshSummary(
@@ -47,6 +56,13 @@ class BlocklistStore private constructor(private val appContext: Context) {
         val failed: Int,
         val skipped: Int,
         val totalHosts: Int
+    )
+
+    private data class DownloadResult(
+        val text: String?,
+        val notModified: Boolean,
+        val etag: String?,
+        val lastModified: String?
     )
 
     private val dir: File = File(appContext.filesDir, DIR_NAME).apply {
@@ -108,63 +124,96 @@ class BlocklistStore private constructor(private val appContext: Context) {
     }
 
     suspend fun addAndFetch(url: String): Entry = withContext(Dispatchers.IO) {
-        val clean = url.trim()
-        val existing = listAll().firstOrNull { it.url == clean }
-        val fileName = existing?.fileName ?: ("list_" + shortHash(clean) + ".zip")
-        val now = System.currentTimeMillis()
-
-        try {
-            val text = download(clean)
-            val hosts = parseHosts(text)
-            val target = File(dir, fileName)
-            writeZip(target, text)
-            val bytes = target.length()
-
-            val entry = Entry(
-                url = clean,
-                fileName = fileName,
-                hostCount = hosts.size,
-                byteSize = bytes,
-                lastFetched = now,
-                lastAttemptAt = now,
-                ok = true,
-                error = null
-            )
-            upsertManifest(entry)
-            Log.i(TAG, "Fetched " + clean + " -> " + hosts.size + " hosts, " + bytes + " bytes")
-            entry
-        } catch (t: Throwable) {
-            Log.w(TAG, "Fetch failed for " + clean + ": " + t.message)
-            // Failure preservation: if we have a previous successful entry,
-            // keep it -- just stamp the attempt and record the error. The
-            // ZIP on disk is untouched, so blocking keeps working.
-            val previous = existing ?: Entry(
-                url = clean,
-                fileName = fileName,
-                hostCount = 0,
-                byteSize = 0L,
-                lastFetched = 0L,
-                lastAttemptAt = 0L,
-                ok = false,
-                error = null
-            )
-            val stillGood = previous.lastFetched > 0L &&
-                File(dir, previous.fileName).exists()
-            val updated = previous.copy(
-                lastAttemptAt = now,
-                ok = stillGood,
-                error = t.message ?: "unknown"
-            )
-            upsertManifest(updated)
-            updated
-        }
+        addAndFetchInternal(url).first
     }
+
+    private suspend fun addAndFetchInternal(url: String): Pair<Entry, Boolean> =
+        withContext(Dispatchers.IO) {
+            val clean = url.trim()
+            val existing = listAll().firstOrNull { it.url == clean }
+            val fileName = existing?.fileName ?: ("list_" + shortHash(clean) + ".zip")
+            val now = System.currentTimeMillis()
+
+            try {
+                val prevEtag = if (existing?.ok == true) existing.etag else null
+                val prevLM = if (existing?.ok == true) existing.lastModified else null
+                val result = download(clean, prevEtag, prevLM)
+
+                if (result.notModified) {
+                    // Server confirms nothing changed. Keep the ZIP on disk
+                    // untouched, skip the parse, and just bump timestamps.
+                    val base = existing
+                    if (base == null) {
+                        throw RuntimeException("304 with no cached entry")
+                    }
+                    val entry = base.copy(
+                        lastFetched = now,
+                        lastAttemptAt = now,
+                        ok = true,
+                        error = null,
+                        etag = result.etag ?: base.etag,
+                        lastModified = result.lastModified ?: base.lastModified
+                    )
+                    upsertManifest(entry)
+                    Log.i(TAG, "Not modified " + clean +
+                        " (kept " + entry.hostCount + " hosts)")
+                    return@withContext entry to true
+                }
+
+                val text = result.text ?: ""
+                val hosts = parseHosts(text)
+                val target = File(dir, fileName)
+                writeZip(target, text)
+                val bytes = target.length()
+
+                val entry = Entry(
+                    url = clean,
+                    fileName = fileName,
+                    hostCount = hosts.size,
+                    byteSize = bytes,
+                    lastFetched = now,
+                    lastAttemptAt = now,
+                    ok = true,
+                    error = null,
+                    etag = result.etag,
+                    lastModified = result.lastModified
+                )
+                upsertManifest(entry)
+                Log.i(TAG, "Fetched " + clean + " -> " + hosts.size +
+                    " hosts, " + bytes + " bytes")
+                entry to false
+            } catch (t: Throwable) {
+                Log.w(TAG, "Fetch failed for " + clean + ": " + t.message)
+                val previous = existing ?: Entry(
+                    url = clean,
+                    fileName = fileName,
+                    hostCount = 0,
+                    byteSize = 0L,
+                    lastFetched = 0L,
+                    lastAttemptAt = 0L,
+                    ok = false,
+                    error = null,
+                    etag = null,
+                    lastModified = null
+                )
+                val stillGood = previous.lastFetched > 0L &&
+                    File(dir, previous.fileName).exists()
+                val updated = previous.copy(
+                    lastAttemptAt = now,
+                    ok = stillGood,
+                    error = t.message ?: "unknown"
+                )
+                upsertManifest(updated)
+                updated to false
+            }
+        }
 
     suspend fun refreshAll(force: Boolean): RefreshSummary = withContext(Dispatchers.IO) {
         val entries = listAll()
         var refreshed = 0
         var failed = 0
         var skipped = 0
+        var notModified = 0
         val now = System.currentTimeMillis()
 
         for (e in entries) {
@@ -174,15 +223,23 @@ class BlocklistStore private constructor(private val appContext: Context) {
                 skipped++
                 continue
             }
-            val result = addAndFetch(e.url)
-            if (result.lastFetched == now) refreshed++ else failed++
+            val pair = addAndFetchInternal(e.url)
+            val result = pair.first
+            val wasNotModified = pair.second
+            if (result.ok) {
+                refreshed++
+                if (wasNotModified) notModified++
+            } else {
+                failed++
+            }
         }
 
         var totalHosts = 0
         for (e in listAll()) if (e.ok) totalHosts += e.hostCount
 
-        Log.i(TAG, "Refresh done: " + refreshed + " ok, " + failed +
-            " failed, " + skipped + " skipped, " + totalHosts + " hosts")
+        Log.i(TAG, "Refresh done: " + refreshed + " ok (" + notModified +
+            " not modified), " + failed + " failed, " + skipped + " skipped, " +
+            totalHosts + " hosts")
         RefreshSummary(refreshed, failed, skipped, totalHosts)
     }
 
@@ -226,12 +283,19 @@ class BlocklistStore private constructor(private val appContext: Context) {
     }
 
     // ------------------------------------------------------------------
-    // HTTP with manual redirect handling and a hard size cap
+    // HTTP with conditional GET, manual redirects and a size cap
     // ------------------------------------------------------------------
 
-    private fun download(url: String): String {
+    private fun download(
+        url: String,
+        prevEtag: String?,
+        prevLastModified: String?
+    ): DownloadResult {
         var current = url
         var hops = 0
+        var carriedEtag = prevEtag
+        var carriedLastModified = prevLastModified
+
         while (hops <= MAX_REDIRECTS) {
             val conn = (URL(current).openConnection() as HttpURLConnection).apply {
                 connectTimeout = TIMEOUT_MS
@@ -239,12 +303,34 @@ class BlocklistStore private constructor(private val appContext: Context) {
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", USER_AGENT)
                 instanceFollowRedirects = false
+
+                if (!carriedEtag.isNullOrBlank()) {
+                    setRequestProperty("If-None-Match", carriedEtag)
+                }
+                if (!carriedLastModified.isNullOrBlank()) {
+                    setRequestProperty("If-Modified-Since", carriedLastModified)
+                }
             }
             try {
                 val code = conn.responseCode
                 when {
+                    code == 304 -> {
+                        return DownloadResult(
+                            text = null,
+                            notModified = true,
+                            etag = conn.getHeaderField("ETag") ?: carriedEtag,
+                            lastModified = conn.getHeaderField("Last-Modified")
+                                ?: carriedLastModified
+                        )
+                    }
                     code in 200..299 -> {
-                        return readCapped(conn.inputStream, MAX_BYTES)
+                        val body = readCapped(conn.inputStream, MAX_BYTES)
+                        return DownloadResult(
+                            text = body,
+                            notModified = false,
+                            etag = conn.getHeaderField("ETag"),
+                            lastModified = conn.getHeaderField("Last-Modified")
+                        )
                     }
                     code == 301 || code == 302 || code == 303 ||
                     code == 307 || code == 308 -> {
@@ -252,6 +338,11 @@ class BlocklistStore private constructor(private val appContext: Context) {
                             ?: throw RuntimeException("HTTP " + code + " without Location")
                         current = URL(URL(current), location).toString()
                         hops++
+                        // Drop conditional headers on redirect: the target is
+                        // a different resource, and some servers will return
+                        // a spurious 304 if validators cross origins.
+                        carriedEtag = null
+                        carriedLastModified = null
                     }
                     else -> throw RuntimeException("HTTP " + code)
                 }
@@ -357,7 +448,9 @@ class BlocklistStore private constructor(private val appContext: Context) {
             lastFetched = lastFetched,
             lastAttemptAt = lastAttempt,
             ok = o.optBoolean("ok", false),
-            error = o.optString("error", "").takeIf { it.isNotBlank() }
+            error = o.optString("error", "").takeIf { it.isNotBlank() },
+            etag = o.optString("etag", "").takeIf { it.isNotBlank() },
+            lastModified = o.optString("lastModified", "").takeIf { it.isNotBlank() }
         )
     }
 
@@ -370,6 +463,8 @@ class BlocklistStore private constructor(private val appContext: Context) {
         put("lastAttemptAt", e.lastAttemptAt)
         put("ok", e.ok)
         put("error", e.error ?: "")
+        put("etag", e.etag ?: "")
+        put("lastModified", e.lastModified ?: "")
     }
 
     private fun shortHash(s: String): String {
