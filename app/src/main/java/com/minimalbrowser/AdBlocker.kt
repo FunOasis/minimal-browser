@@ -85,7 +85,7 @@ class AdBlocker private constructor(
             CoroutineScope(Dispatchers.IO).launch {
                 loadFromAssets(context)
                 applyMergedRules()
-                refreshSubscriptionsIfStale()
+                refreshSubscriptionsAsync(force = false)
             }
         }
     }
@@ -115,7 +115,7 @@ class AdBlocker private constructor(
             if (customPatterns.isEmpty()) basePatterns else basePatterns + customPatterns
 
         applyRules(mergedHosts, mergedPatterns)
-        Log.i(TAG, "Rules applied: ${stats()}")
+        Log.i(TAG, "Rules applied: " + stats().toString())
     }
 
     fun reloadCustomRules() {
@@ -123,19 +123,6 @@ class AdBlocker private constructor(
         CoroutineScope(Dispatchers.IO).launch { applyMergedRules() }
     }
 
-    /**
-     * Called on app start: if cached subscriptions are missing or older
-     * than the refresh interval, download them now. Never blocks UI.
-     */
-    private fun refreshSubscriptionsIfStale() {
-        refreshSubscriptionsAsync(force = false)
-    }
-
-    /**
-     * Downloads every URL from Prefs.subscriptionUrls, parses the hosts,
-     * caches the merged set, and re-applies rules. Safe to call from UI
-     * thread. Pass force=true after the user edits the URL list.
-     */
     fun refreshSubscriptionsAsync(force: Boolean) {
         val ctx = context ?: return
         CoroutineScope(Dispatchers.IO).launch {
@@ -160,8 +147,8 @@ class AdBlocker private constructor(
                 p.subscriptionRefreshTime = now
             }
             applyMergedRules()
-            Log.i(TAG, "Subscriptions: ${result.sourcesOk} ok, " +
-                    "${result.sourcesFailed} failed, ${result.hosts.size} hosts")
+            Log.i(TAG, "Subscriptions: " + result.sourcesOk + " ok, " +
+                    result.sourcesFailed + " failed, " + result.hosts.size + " hosts")
         }
     }
 
@@ -180,7 +167,7 @@ class AdBlocker private constructor(
                 .bufferedReader(Charsets.UTF_8)
                 .use { it.readText() }
         } catch (e: Exception) {
-            Log.w(TAG, "Could not load $file: ${e.message}")
+            Log.w(TAG, "Could not load " + file + ": " + e.message)
             ""
         }
     }
@@ -265,7 +252,10 @@ class AdBlocker private constructor(
         return host.substringBefore(':').takeIf { it.isNotBlank() }?.lowercase()
     }
 
-    data class Stats(val hosts: Int, val patterns: Int)
+    data class Stats(val hosts: Int, val patterns: Int) {
+        override fun toString(): String = "hosts=" + hosts + " patterns=" + patterns
+    }
+
     fun stats() = Stats(hostCount, urlPatterns.size)
 
     private class SimpleLruCache<K, V>(private val maxSize: Int) {
