@@ -20,6 +20,19 @@
         android:paddingTop="@dimen/topbar_padding_v"
         android:paddingBottom="@dimen/topbar_padding_v">
 
+        <ImageButton
+            android:id="@+id/btnForward"
+            android:layout_width="@dimen/icon_button_size"
+            android:layout_height="@dimen/icon_button_size"
+            android:layout_marginStart="2dp"
+            android:layout_marginEnd="2dp"
+            android:background="@drawable/bg_icon_glass"
+            android:contentDescription="@string/cd_forward"
+            android:padding="@dimen/icon_button_padding"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_arrow_forward"
+            android:tint="@color/icon_primary" />
+
         <TextView
             android:id="@+id/tabBadge"
             android:layout_width="wrap_content"
@@ -38,19 +51,6 @@
             android:focusable="true"
             android:contentDescription="@string/cd_tabs"
             tools:text="3/5" />
-
-        <ImageButton
-            android:id="@+id/btnForward"
-            android:layout_width="@dimen/icon_button_size"
-            android:layout_height="@dimen/icon_button_size"
-            android:layout_marginStart="2dp"
-            android:layout_marginEnd="2dp"
-            android:background="@drawable/bg_icon_glass"
-            android:contentDescription="@string/cd_forward"
-            android:padding="@dimen/icon_button_padding"
-            android:scaleType="centerInside"
-            android:src="@drawable/ic_arrow_forward"
-            android:tint="@color/icon_primary" />
 
         <LinearLayout
             android:id="@+id/urlPill"
@@ -98,7 +98,7 @@
             android:layout_width="@dimen/icon_button_size"
             android:layout_height="@dimen/icon_button_size"
             android:layout_marginStart="4dp"
-            android:background="@drawable/bg_icon_glass"
+            android:background="@drawable/bg_icon_glass_rect"
             android:contentDescription="@string/cd_menu"
             android:padding="@dimen/icon_button_padding"
             android:scaleType="centerInside"
