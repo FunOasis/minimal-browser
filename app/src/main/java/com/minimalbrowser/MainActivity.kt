@@ -104,7 +104,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.addressBar.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 binding.addressBar.post { binding.addressBar.selectAll() }
-                maybeShowSuggestions(binding.addressBar.text?.toString().orEmpty())
+                // Only show suggestions once the user starts typing.
+                // Tapping the empty bar should not dump the whole history.
             } else {
                 dismissSuggestions()
             }
@@ -197,21 +198,29 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         super.onDestroy()
     }
 
+    // -------------------------------------------------------------------------
+    // Suggestions
+    // -------------------------------------------------------------------------
+
     private fun maybeShowSuggestions(query: String) {
         val q = query.trim().lowercase()
-        val entries = history.loadAll()
 
-        val filtered = if (q.isEmpty()) {
-            entries.take(MAX_VISIBLE_SUGGESTIONS)
-        } else {
-            entries.asSequence()
-                .filter { e ->
-                    e.url.lowercase().contains(q) ||
-                        e.title.lowercase().contains(q)
-                }
-                .take(MAX_VISIBLE_SUGGESTIONS)
-                .toList()
+        // Bug 1 fix: never show history on an empty query. Suggestions
+        // should only appear once the user has typed at least one
+        // character that can be matched against url or title.
+        if (q.isEmpty()) {
+            dismissSuggestions()
+            return
         }
+
+        val entries = history.loadAll()
+        val filtered = entries.asSequence()
+            .filter { e ->
+                e.url.lowercase().contains(q) ||
+                    e.title.lowercase().contains(q)
+            }
+            .take(MAX_VISIBLE_SUGGESTIONS)
+            .toList()
 
         if (filtered.isEmpty()) {
             dismissSuggestions()
@@ -313,6 +322,10 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         suppressSuggestionRefresh = false
     }
 
+    // -------------------------------------------------------------------------
+    // Menu / tabs / dialogs
+    // -------------------------------------------------------------------------
+
     private fun showOverflowMenu(anchor: View) {
         val themedContext = ContextThemeWrapper(
             this,
@@ -392,14 +405,23 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     private fun showTabSwitcher() {
-        TabSwitcherSheet(this, tabManager) { visible ->
-            if (visible) {
-                binding.footerText.visibility = View.VISIBLE
-            } else {
-                val url = tabManager.getActiveWebView()?.url ?: ""
-                updateFooterFor(url)
+        TabSwitcherSheet(
+            context = this,
+            tabManager = tabManager,
+            onVisibilityChanged = { visible ->
+                if (visible) {
+                    binding.footerText.visibility = View.VISIBLE
+                } else {
+                    val url = tabManager.getActiveWebView()?.url ?: ""
+                    updateFooterFor(url)
+                }
+            },
+            onLastTabCloseRequested = {
+                // Bug 2 fix: closing the final remaining tab is equivalent
+                // to exiting — same confirm dialog as back-button-at-home.
+                showExitConfirm()
             }
-        }.show()
+        ).show()
     }
 
     private fun updateTabBadge() {
@@ -486,9 +508,24 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             .show()
     }
 
+    // -------------------------------------------------------------------------
+    // BrowserUiListener
+    // -------------------------------------------------------------------------
+
     override fun onUrlChanged(view: WebView, url: String) {
         if (view !== tabManager.getActiveWebView()) return
         updateFooterFor(url)
+
+        // Bug 3 fix: the internal home page has no favicon. Whenever the
+        // active tab lands on minimal://home — either because the user
+        // tapped Home in the menu, or because a real tab was closed and
+        // we fell back to a home-started neighbor — wipe both the pill
+        // icon and the tab's stored favicon so nothing stale lingers.
+        if (url.startsWith(Prefs.HOME_URL)) {
+            tabManager.getActive()?.favicon = null
+            binding.favicon.setImageDrawable(null)
+            binding.favicon.visibility = View.GONE
+        }
 
         val currentTabId = tabManager.getActive()?.id ?: -1L
         val tabChanged = currentTabId != lastSeenTabId
@@ -543,6 +580,10 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             contentLength = -1L
         )
     }
+
+    // -------------------------------------------------------------------------
+    // Navigation helpers
+    // -------------------------------------------------------------------------
 
     private fun loadHome() {
         val wv = tabManager.getActiveWebView() ?: return
