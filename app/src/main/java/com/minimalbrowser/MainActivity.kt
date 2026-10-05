@@ -5,15 +5,24 @@ import android.app.DownloadManager
 import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextUtils
+import android.text.TextWatcher
 import android.view.ContextThemeWrapper
 import android.view.KeyEvent
 import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.webkit.WebView
+import android.widget.ArrayAdapter
 import android.widget.EditText
+import android.widget.ListView
 import android.widget.PopupMenu
+import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -21,6 +30,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.minimalbrowser.databinding.ActivityMainBinding
 import java.net.URLEncoder
+import java.util.ArrayList
 
 class MainActivity : AppCompatActivity(), BrowserUiListener {
 
@@ -28,8 +38,15 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     private lateinit var blocker: AdBlocker
     private lateinit var prefs: Prefs
     private lateinit var tabManager: TabManager
+    private lateinit var history: HistoryStore
 
     private var lastSeenTabId: Long = -1L
+
+    private var suggestionPopup: PopupWindow? = null
+    private var suggestionList: ListView? = null
+    private var suggestionAdapter: ArrayAdapter<String>? = null
+    private var currentSuggestions: List<HistoryStore.Entry> = emptyList()
+    private var suppressSuggestionRefresh = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,6 +56,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
         blocker = AdBlocker.get(this)
         prefs   = Prefs.get(this)
+        history = HistoryStore.get(this)
 
         tabManager = TabManager(
             activity = this,
@@ -80,17 +98,35 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.addressBar.setOnEditorActionListener { _, actionId, event ->
             val isGo = actionId == EditorInfo.IME_ACTION_GO ||
                 (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
-            if (isGo) { navigate(); true } else false
+            if (isGo) { dismissSuggestions(); navigate(); true } else false
         }
 
         binding.addressBar.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 binding.addressBar.post { binding.addressBar.selectAll() }
+                maybeShowSuggestions(binding.addressBar.text?.toString().orEmpty())
+            } else {
+                dismissSuggestions()
             }
         }
 
+        binding.addressBar.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) {
+                if (suppressSuggestionRefresh) return
+                if (binding.addressBar.hasFocus()) {
+                    maybeShowSuggestions(s?.toString().orEmpty())
+                }
+            }
+            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+            override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+        })
+
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (suggestionPopup?.isShowing == true) {
+                    dismissSuggestions()
+                    return
+                }
                 val wv = tabManager.getActiveWebView()
                 if (wv != null && wv.canGoBack()) {
                     wv.goBack()
@@ -122,7 +158,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             val active = tabManager.getActiveWebView()
             if (active != null) {
                 active.loadUrl(url)
-                binding.addressBar.setText(displayUrl(url))
+                setAddressBarText(displayUrl(url))
             }
         }
     }
@@ -156,8 +192,125 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     override fun onDestroy() {
+        dismissSuggestions()
         tabManager.destroyAll()
         super.onDestroy()
+    }
+
+    private fun maybeShowSuggestions(query: String) {
+        val q = query.trim().lowercase()
+        val entries = history.loadAll()
+
+        val filtered = if (q.isEmpty()) {
+            entries.take(MAX_VISIBLE_SUGGESTIONS)
+        } else {
+            entries.asSequence()
+                .filter { e ->
+                    e.url.lowercase().contains(q) ||
+                        e.title.lowercase().contains(q)
+                }
+                .take(MAX_VISIBLE_SUGGESTIONS)
+                .toList()
+        }
+
+        if (filtered.isEmpty()) {
+            dismissSuggestions()
+            return
+        }
+
+        currentSuggestions = filtered
+
+        val labels = filtered.map { e ->
+            if (e.title.isBlank()) e.url else e.title + "\n" + e.url
+        }
+
+        if (suggestionPopup == null) {
+            buildSuggestionsPopup()
+        }
+        suggestionAdapter?.clear()
+        suggestionAdapter?.addAll(labels)
+        suggestionAdapter?.notifyDataSetChanged()
+
+        val popup = suggestionPopup ?: return
+        if (popup.isShowing) {
+            popup.update(
+                binding.urlPill,
+                binding.urlPill.width,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        } else {
+            popup.width = binding.urlPill.width
+            popup.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            popup.showAsDropDown(binding.urlPill, 0, 4)
+        }
+    }
+
+    private fun buildSuggestionsPopup() {
+        val listView = ListView(this).apply {
+            divider = ColorDrawable(Color.parseColor("#1AFFFFFF"))
+            dividerHeight = 1
+            setBackgroundColor(Color.parseColor("#E60D0D0D"))
+            setPadding(0, 4, 0, 4)
+        }
+
+        val adapter = object : ArrayAdapter<String>(
+            this,
+            android.R.layout.simple_list_item_1,
+            ArrayList()
+        ) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getView(position, convertView, parent)
+                val tv = v.findViewById<TextView>(android.R.id.text1)
+                tv.setTextColor(Color.parseColor("#F5F5F5"))
+                tv.textSize = 14f
+                tv.setPadding(32, 24, 32, 24)
+                tv.maxLines = 2
+                tv.ellipsize = TextUtils.TruncateAt.END
+                return v
+            }
+        }
+
+        listView.adapter = adapter
+        listView.setOnItemClickListener { _, _, position, _ ->
+            val entry = currentSuggestions.getOrNull(position) ?: return@setOnItemClickListener
+            suppressSuggestionRefresh = true
+            binding.addressBar.setText(displayUrl(entry.url))
+            suppressSuggestionRefresh = false
+            binding.addressBar.setSelection(binding.addressBar.text?.length ?: 0)
+            binding.addressBar.clearFocus()
+            dismissSuggestions()
+            val wv = tabManager.getActiveWebView() ?: return@setOnItemClickListener
+            binding.progressBar.progress = 0
+            binding.progressBar.visibility = View.VISIBLE
+            wv.loadUrl(entry.url)
+        }
+
+        val popup = PopupWindow(
+            listView,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true
+        ).apply {
+            isOutsideTouchable = true
+            isFocusable = false
+            elevation = 12f
+            setBackgroundDrawable(ColorDrawable(Color.parseColor("#E60D0D0D")))
+            inputMethodMode = PopupWindow.INPUT_METHOD_NEEDED
+        }
+
+        suggestionPopup = popup
+        suggestionList = listView
+        suggestionAdapter = adapter
+    }
+
+    private fun dismissSuggestions() {
+        suggestionPopup?.dismiss()
+    }
+
+    private fun setAddressBarText(text: String) {
+        suppressSuggestionRefresh = true
+        binding.addressBar.setText(text)
+        suppressSuggestionRefresh = false
     }
 
     private fun showOverflowMenu(anchor: View) {
@@ -252,7 +405,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     private fun updateTabBadge() {
         val active = tabManager.getActiveIndex() + 1
         val total = tabManager.count()
-        binding.tabBadge.text = "$active/$total"
+        binding.tabBadge.text = active.toString() + "/" + total
     }
 
     private fun updateFooterFor(url: String) {
@@ -342,7 +495,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         lastSeenTabId = currentTabId
 
         if (binding.addressBar.hasFocus() && !tabChanged) return
-        binding.addressBar.setText(displayUrl(url))
+        setAddressBarText(displayUrl(url))
     }
 
     override fun onNavStateChanged(view: WebView, canGoBack: Boolean, canGoForward: Boolean) {
@@ -359,6 +512,9 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     override fun onPageLoadFinished(view: WebView) {
         if (view !== tabManager.getActiveWebView()) return
         binding.swipeRefresh.isRefreshing = false
+        val url = view.url ?: return
+        val title = view.title.orEmpty()
+        history.record(url, title)
     }
 
     override fun onPageLoadError(view: WebView?, description: String, url: String?) {
@@ -390,7 +546,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     private fun loadHome() {
         val wv = tabManager.getActiveWebView() ?: return
-        binding.addressBar.setText("")
+        setAddressBarText("")
         wv.loadUrl(Prefs.HOME_URL)
     }
 
@@ -411,34 +567,33 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         input.startsWith("http://") || input.startsWith("https://") -> input
         input.contains(" ") || !input.contains(".") ->
             "https://search.brave.com/search?q=" + URLEncoder.encode(input, "UTF-8")
-        else -> "https://$input"
+        else -> "https://" + input
     }
 
     private fun errorPageHtml(description: String, url: String?): String {
         val safeDesc = description.replace("<", "&lt;").replace("&", "&amp;")
         val safeUrl  = (url ?: "").replace("<", "&lt;").replace("&", "&amp;")
-        return """
-            <!DOCTYPE html>
-            <html><head>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-              html, body { margin: 0; padding: 0; background: #0A0A0A; }
-              body { font-family: -apple-system, system-ui, sans-serif;
-                     color: #FFFFFF; padding: 64px 24px; text-align: center; }
-              h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
-              p  { font-size: 15px; color: #8A8A8A; margin: 0 0 4px; }
-              .url { font-size: 12px; color: #666666; word-break: break-all;
-                     margin-top: 20px; }
-            </style>
-            </head><body>
-              <h1>Can't open this page</h1>
-              <p>$safeDesc</p>
-              <p class="url">$safeUrl</p>
-            </body></html>
-        """.trimIndent()
+        return "<!DOCTYPE html>" +
+            "<html><head>" +
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+            "<style>" +
+            "html, body { margin: 0; padding: 0; background: #0A0A0A; }" +
+            "body { font-family: -apple-system, system-ui, sans-serif; " +
+            "color: #FFFFFF; padding: 64px 24px; text-align: center; }" +
+            "h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }" +
+            "p  { font-size: 15px; color: #8A8A8A; margin: 0 0 4px; }" +
+            ".url { font-size: 12px; color: #666666; word-break: break-all; " +
+            "margin-top: 20px; }" +
+            "</style>" +
+            "</head><body>" +
+            "<h1>Can't open this page</h1>" +
+            "<p>" + safeDesc + "</p>" +
+            "<p class=\"url\">" + safeUrl + "</p>" +
+            "</body></html>"
     }
 
     companion object {
         const val EXTRA_SHORTCUT_URL = "com.minimalbrowser.EXTRA_SHORTCUT_URL"
+        private const val MAX_VISIBLE_SUGGESTIONS = 6
     }
 }
