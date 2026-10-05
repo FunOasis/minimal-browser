@@ -39,6 +39,7 @@
             android:fontFamily="monospace"
             android:gravity="top|start"
             android:importantForAutofill="no"
+            android:hint="https://example.com/list.txt"
             android:inputType="textMultiLine|textUri|textNoSuggestions"
             android:maxLines="4"
             android:minLines="2"
@@ -46,6 +47,46 @@
             android:textColor="@color/text_primary"
             android:textColorHint="@color/text_tertiary"
             android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/custom_filters_warehouse_label"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/warehouseContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <TextView
+                android:id="@+id/warehouseEmptyText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="8dp"
+                android:paddingBottom="8dp"
+                android:text="@string/custom_filters_warehouse_empty"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/customFilterStats"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
 
         <TextView
             android:layout_width="match_parent"
@@ -114,14 +155,6 @@
             android:textColor="@color/text_primary"
             android:textColorHint="@color/text_tertiary"
             android:textSize="13sp" />
-
-        <TextView
-            android:id="@+id/customFilterStats"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:textColor="@color/text_secondary"
-            android:textSize="12sp" />
 
     </LinearLayout>
 </ScrollView>
