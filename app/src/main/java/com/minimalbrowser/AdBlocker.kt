@@ -38,34 +38,10 @@ class AdBlocker private constructor(
         )
     }
 
-    private class SuffixTrie {
-        private class Node {
-            val children = HashMap<String, Node>(4)
-            var terminal = false
-        }
-
-        private val root = Node()
-
-        fun insert(reversedLabels: List<String>) {
-            if (reversedLabels.isEmpty()) return
-            var node = root
-            for (label in reversedLabels) {
-                node = node.children.getOrPut(label) { Node() }
-            }
-            node.terminal = true
-        }
-
-        fun matches(reversedLabels: List<String>): Boolean {
-            var node = root
-            for (label in reversedLabels) {
-                node = node.children[label] ?: return false
-                if (node.terminal) return true
-            }
-            return false
-        }
-    }
-
-    @Volatile private var hostTrie: SuffixTrie = SuffixTrie()
+    // Stage 6: the trie is gone. hostSet is a flat sorted LongArray of
+    // FNV-1a hashes over reversed hostnames. ~1.2 MB for 150k hosts
+    // instead of ~35 MB for the equivalent trie. Same matching semantics.
+    @Volatile private var hostSet: HostSet = HostSet.EMPTY
     @Volatile private var urlPatterns: Set<String> = emptySet()
     @Volatile private var hostCount: Int = 0
     @Volatile private var basePatterns: Set<String> = emptySet()
@@ -89,8 +65,6 @@ class AdBlocker private constructor(
                 loadBasePatterns(ctx)
                 seedDefaultsIfNeeded()
                 reloadAllRules()
-                // Second pass: refresh stale lists over the network, then
-                // rebuild the trie if anything actually changed on disk.
                 blocklistStore?.refreshAll(force = false)
                 reloadAllRules()
             }
@@ -102,10 +76,6 @@ class AdBlocker private constructor(
         basePatterns = parsePatterns(filterText)
     }
 
-    /**
-     * First-ever launch: the warehouse is empty, so seed the default
-     * subscription URLs. Every subsequent launch short-circuits here.
-     */
     private suspend fun seedDefaultsIfNeeded() {
         val store = blocklistStore ?: return
         if (store.listAll().isNotEmpty()) return
@@ -124,7 +94,15 @@ class AdBlocker private constructor(
         val store = blocklistStore ?: return
         val p = prefs ?: return
 
-        val subHosts = store.loadAllHosts()
+        val cached = store.readHostsCache()
+        val subHosts = if (cached != null) {
+            cached
+        } else {
+            val fresh = store.loadAllHosts()
+            store.writeHostsCache(fresh)
+            fresh
+        }
+
         val customHosts = parseHosts(p.customBlocklist)
         val customPatterns = parsePatterns(p.customFilters)
 
@@ -160,9 +138,7 @@ class AdBlocker private constructor(
 
     @Synchronized
     private fun applyRules(hosts: Set<String>, patterns: Set<String>) {
-        val trie = SuffixTrie()
-        for (h in hosts) trie.insert(reverseLabels(h))
-        hostTrie = trie
+        hostSet = HostSet.from(hosts)
         urlPatterns = patterns
         hostCount = hosts.size
         decisionCache.evictAll()
@@ -205,22 +181,6 @@ class AdBlocker private constructor(
         return out
     }
 
-    private fun reverseLabels(host: String): List<String> {
-        if (host.isEmpty()) return emptyList()
-        val out = ArrayList<String>(4)
-        var end = host.length
-        var i = host.length - 1
-        while (i >= 0) {
-            if (host[i] == '.') {
-                if (i + 1 < end) out.add(host.substring(i + 1, end))
-                end = i
-            }
-            i--
-        }
-        if (end > 0) out.add(host.substring(0, end))
-        return out
-    }
-
     fun isBlocked(url: String): Boolean {
         if (url.isBlank()) return false
         decisionCache.get(url)?.let { return it }
@@ -231,7 +191,7 @@ class AdBlocker private constructor(
 
     private fun check(lower: String): Boolean {
         val host = extractHost(lower)
-        if (host != null && hostTrie.matches(reverseLabels(host))) return true
+        if (host != null && hostSet.matches(host)) return true
         for (p in urlPatterns) {
             if (lower.contains(p)) return true
         }
