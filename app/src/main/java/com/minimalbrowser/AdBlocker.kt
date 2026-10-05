@@ -16,19 +16,7 @@ class AdBlocker private constructor(
 
     companion object {
         private const val TAG        = "AdBlocker"
-
-        /**
-         * 8k entries @ ~150 bytes/key ≈ 1.2 MB of RAM. More than enough
-         * for a browsing session; the eviction path only fires under
-         * sustained heavy browsing.
-         */
         private const val CACHE_SIZE = 8_000
-
-        /**
-         * Compiled once. Kotlin's String.split(regex: String) does NOT
-         * cache the compiled pattern, so building it inline per blocklist
-         * line would recompile ~50,000 times at boot.
-         */
         private val WHITESPACE = Regex("\\s+")
 
         @Volatile private var instance: AdBlocker? = null
@@ -38,7 +26,6 @@ class AdBlocker private constructor(
                 instance ?: AdBlocker(context.applicationContext).also { instance = it }
             }
 
-        /** JVM-friendly factory for unit tests (no Context, no asset I/O). */
         @JvmStatic
         internal fun forTesting(
             hosts: Set<String>,
@@ -51,9 +38,6 @@ class AdBlocker private constructor(
         )
     }
 
-    // -------------------------------------------------------------------
-    // Host matcher: reverse-label suffix trie.
-    // -------------------------------------------------------------------
     private class SuffixTrie {
         private class Node {
             val children = HashMap<String, Node>(4)
@@ -85,17 +69,9 @@ class AdBlocker private constructor(
     @Volatile private var urlPatterns: Set<String> = emptySet()
     @Volatile private var hostCount: Int = 0
 
-    /**
-     * Built-in rules from assets/blocklist.txt and assets/filters.txt.
-     * Populated once at boot and never modified afterwards.
-     */
     @Volatile private var baseHosts: Set<String> = emptySet()
     @Volatile private var basePatterns: Set<String> = emptySet()
 
-    // -------------------------------------------------------------------
-    // Plain-JVM LRU cache. android.util.LruCache throws "Stub!" under
-    // plain JVM unit tests, so we ship our own.
-    // -------------------------------------------------------------------
     private val decisionCache = SimpleLruCache<String, Boolean>(CACHE_SIZE)
 
     init {
@@ -108,13 +84,11 @@ class AdBlocker private constructor(
         if (autoLoadFromAssets && context != null) {
             CoroutineScope(Dispatchers.IO).launch {
                 loadFromAssets(context)
+                applyMergedRules()
+                refreshSubscriptionsIfStale()
             }
         }
     }
-
-    // -------------------------------------------------------------------
-    // Rule loading + merging
-    // -------------------------------------------------------------------
 
     private fun loadFromAssets(ctx: Context) {
         val hostText   = readAssetText(ctx, "blocklist.txt")
@@ -122,28 +96,21 @@ class AdBlocker private constructor(
 
         baseHosts    = parseHosts(hostText)
         basePatterns = parsePatterns(filterText)
-
-        applyMergedRules()
     }
 
-    /**
-     * Merges base (built-in) rules with any user-supplied rules from
-     * Prefs, then atomically publishes the result. Called at boot and
-     * whenever the Custom filters dialog saves.
-     *
-     * Safe to call from any thread. Because applyRules() clears the
-     * decision cache, the new rules take effect on the very next
-     * shouldInterceptRequest — no restart, no re-navigation required.
-     */
     private fun applyMergedRules() {
         val ctx = context ?: return
 
         val p = Prefs.get(ctx)
         val customHosts    = parseHosts(p.customBlocklist)
+        val subHosts       = parseHosts(p.cachedSubscriptionHosts)
         val customPatterns = parsePatterns(p.customFilters)
 
-        val mergedHosts =
-            if (customHosts.isEmpty()) baseHosts else baseHosts + customHosts
+        val mergedHosts = buildSet {
+            addAll(baseHosts)
+            addAll(customHosts)
+            addAll(subHosts)
+        }
         val mergedPatterns =
             if (customPatterns.isEmpty()) basePatterns else basePatterns + customPatterns
 
@@ -151,14 +118,50 @@ class AdBlocker private constructor(
         Log.i(TAG, "Rules applied: ${stats()}")
     }
 
-    /**
-     * Public entry point for the UI. Fires off a background reload of
-     * merged rules after the user saves custom filters.
-     */
     fun reloadCustomRules() {
         if (context == null) return
+        CoroutineScope(Dispatchers.IO).launch { applyMergedRules() }
+    }
+
+    /**
+     * Called on app start: if cached subscriptions are missing or older
+     * than the refresh interval, download them now. Never blocks UI.
+     */
+    private fun refreshSubscriptionsIfStale() {
+        refreshSubscriptionsAsync(force = false)
+    }
+
+    /**
+     * Downloads every URL from Prefs.subscriptionUrls, parses the hosts,
+     * caches the merged set, and re-applies rules. Safe to call from UI
+     * thread. Pass force=true after the user edits the URL list.
+     */
+    fun refreshSubscriptionsAsync(force: Boolean) {
+        val ctx = context ?: return
         CoroutineScope(Dispatchers.IO).launch {
+            val p = Prefs.get(ctx)
+            val now = System.currentTimeMillis()
+            if (!force &&
+                now - p.subscriptionRefreshTime < Prefs.SUBSCRIPTION_REFRESH_INTERVAL_MS) {
+                return@launch
+            }
+
+            val urls = p.subscriptionUrls
+                .lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
+                .toList()
+
+            if (urls.isEmpty()) return@launch
+
+            val result = BlocklistSubscriptions.fetch(urls)
+            if (result.hosts.isNotEmpty()) {
+                p.cachedSubscriptionHosts = result.hosts.joinToString("\n")
+                p.subscriptionRefreshTime = now
+            }
             applyMergedRules()
+            Log.i(TAG, "Subscriptions: ${result.sourcesOk} ok, " +
+                    "${result.sourcesFailed} failed, ${result.hosts.size} hosts")
         }
     }
 
@@ -171,10 +174,6 @@ class AdBlocker private constructor(
         decisionCache.evictAll()
     }
 
-    // -------------------------------------------------------------------
-    // Text parsing — shared between assets and user-pasted rules
-    // -------------------------------------------------------------------
-
     private fun readAssetText(ctx: Context, file: String): String {
         return try {
             ctx.assets.open(file)
@@ -186,13 +185,6 @@ class AdBlocker private constructor(
         }
     }
 
-    /**
-     * Parse a blocklist text blob. Accepts:
-     *   - one bare host per line ("doubleclick.net")
-     *   - hosts-file format ("0.0.0.0 doubleclick.net")
-     *   - comments starting with # or !
-     * Blank lines and 0.0.0.0 / 127.0.0.1 sentinel rows are ignored.
-     */
     private fun parseHosts(text: String): Set<String> {
         if (text.isEmpty()) return emptySet()
         val out = HashSet<String>(1024)
@@ -208,10 +200,6 @@ class AdBlocker private constructor(
         return out
     }
 
-    /**
-     * Parse a URL keyword pattern blob. One keyword per line, lowercased,
-     * # / ! comments skipped.
-     */
     private fun parsePatterns(text: String): Set<String> {
         if (text.isEmpty()) return emptySet()
         val out = HashSet<String>(256)
@@ -223,10 +211,6 @@ class AdBlocker private constructor(
         return out
     }
 
-    /**
-     * "ads.example.com" -> ["com", "example", "ads"].
-     * Manual scan to avoid regex / array churn on the boot path.
-     */
     private fun reverseLabels(host: String): List<String> {
         if (host.isEmpty()) return emptyList()
         val out = ArrayList<String>(4)
@@ -243,17 +227,10 @@ class AdBlocker private constructor(
         return out
     }
 
-    // -------------------------------------------------------------------
-    // Hot path
-    // -------------------------------------------------------------------
-
     fun isBlocked(url: String): Boolean {
         if (url.isBlank()) return false
-
         decisionCache.get(url)?.let { return it }
-
         val result = check(url.lowercase())
-
         decisionCache.put(url, result)
         return result
     }
@@ -261,7 +238,6 @@ class AdBlocker private constructor(
     private fun check(lower: String): Boolean {
         val host = extractHost(lower)
         if (host != null && hostTrie.matches(reverseLabels(host))) return true
-
         for (p in urlPatterns) {
             if (lower.contains(p)) return true
         }
@@ -292,28 +268,14 @@ class AdBlocker private constructor(
     data class Stats(val hosts: Int, val patterns: Int)
     fun stats() = Stats(hostCount, urlPatterns.size)
 
-    // -------------------------------------------------------------------
-    // Plain-JVM LRU cache
-    // -------------------------------------------------------------------
     private class SimpleLruCache<K, V>(private val maxSize: Int) {
-
-        private val map = object : LinkedHashMap<K, V>(16, 0.75f, /* accessOrder = */ true) {
+        private val map = object : LinkedHashMap<K, V>(16, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<K, V>): Boolean {
                 return size > maxSize
             }
         }
-
-        @Synchronized
-        fun get(key: K): V? = map[key]
-
-        @Synchronized
-        fun put(key: K, value: V) {
-            map[key] = value
-        }
-
-        @Synchronized
-        fun evictAll() {
-            map.clear()
-        }
+        @Synchronized fun get(key: K): V? = map[key]
+        @Synchronized fun put(key: K, value: V) { map[key] = value }
+        @Synchronized fun evictAll() { map.clear() }
     }
 }
