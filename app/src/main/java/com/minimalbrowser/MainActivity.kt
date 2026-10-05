@@ -20,6 +20,8 @@ import android.view.inputmethod.EditorInfo
 import android.webkit.WebView
 import android.widget.ArrayAdapter
 import android.widget.EditText
+import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.PopupMenu
 import android.widget.PopupWindow
@@ -29,6 +31,10 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.minimalbrowser.databinding.ActivityMainBinding
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.net.URLEncoder
 import java.util.ArrayList
 
@@ -104,8 +110,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.addressBar.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 binding.addressBar.post { binding.addressBar.selectAll() }
-                // Only show suggestions once the user starts typing.
-                // Tapping the empty bar should not dump the whole history.
+                // Suggestions only appear once the user types — an empty
+                // focus does not dump history.
             } else {
                 dismissSuggestions()
             }
@@ -204,10 +210,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     private fun maybeShowSuggestions(query: String) {
         val q = query.trim().lowercase()
-
-        // Bug 1 fix: never show history on an empty query. Suggestions
-        // should only appear once the user has typed at least one
-        // character that can be matched against url or title.
         if (q.isEmpty()) {
             dismissSuggestions()
             return
@@ -417,8 +419,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
                 }
             },
             onLastTabCloseRequested = {
-                // Bug 2 fix: closing the final remaining tab is equivalent
-                // to exiting — same confirm dialog as back-button-at-home.
                 showExitConfirm()
             }
         ).show()
@@ -466,46 +466,150 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         Toast.makeText(this, msgRes, Toast.LENGTH_SHORT).show()
     }
 
-    private fun showCustomFiltersDialog() {
-        val view = layoutInflater.inflate(R.layout.dialog_custom_filters, null)
-        val editSubs      = view.findViewById<EditText>(R.id.editSubscriptions)
-        val editBlocklist = view.findViewById<EditText>(R.id.editBlocklist)
-        val editPatterns  = view.findViewById<EditText>(R.id.editPatterns)
-        val statsView     = view.findViewById<TextView>(R.id.customFilterStats)
+    // -------------------------------------------------------------------------
+    // Ad blocking dialog — warehouse driven
+    // -------------------------------------------------------------------------
 
-        editSubs.setText(prefs.subscriptionUrls)
+    private fun showCustomFiltersDialog() {
+        val store = BlocklistStore.get(this)
+        val view = layoutInflater.inflate(R.layout.dialog_custom_filters, null)
+
+        val editSubs            = view.findViewById<EditText>(R.id.editSubscriptions)
+        val warehouseContainer  = view.findViewById<LinearLayout>(R.id.warehouseContainer)
+        val warehouseEmptyText  = view.findViewById<TextView>(R.id.warehouseEmptyText)
+        val editBlocklist       = view.findViewById<EditText>(R.id.editBlocklist)
+        val editPatterns        = view.findViewById<EditText>(R.id.editPatterns)
+        val statsView           = view.findViewById<TextView>(R.id.customFilterStats)
+
         editBlocklist.setText(prefs.customBlocklist)
         editPatterns.setText(prefs.customFilters)
 
-        val s = blocker.stats()
-        statsView.text = getString(R.string.custom_filters_stats, s.hosts, s.patterns)
+        fun refreshStats() {
+            val s = blocker.stats()
+            statsView.text = getString(R.string.custom_filters_stats, s.hosts, s.patterns)
+        }
+
+        fun refreshWarehouse() {
+            val entries = store.listAll()
+            warehouseContainer.removeAllViews()
+            if (entries.isEmpty()) {
+                warehouseEmptyText.visibility = View.VISIBLE
+            } else {
+                warehouseEmptyText.visibility = View.GONE
+                for (e in entries) {
+                    val row = layoutInflater.inflate(
+                        R.layout.item_warehouse_list,
+                        warehouseContainer,
+                        false
+                    )
+                    val urlView = row.findViewById<TextView>(R.id.warehouseUrl)
+                    val metaView = row.findViewById<TextView>(R.id.warehouseMeta)
+                    val removeBtn = row.findViewById<ImageButton>(R.id.removeWarehouseList)
+
+                    urlView.text = e.url
+
+                    val hostLabel = e.hostCount.toString() + " hosts"
+                    val sizeLabel = humanSize(e.byteSize)
+                    val ageLabel = humanAge(e.lastFetched)
+                    val prefix = if (e.ok) "" else "FAILED - "
+                    metaView.text = prefix + hostLabel + " - " + sizeLabel + " - " + ageLabel
+
+                    removeBtn.setOnClickListener {
+                        store.remove(e.url)
+                        blocker.reloadCustomRules()
+                        refreshWarehouse()
+                        refreshStats()
+                    }
+
+                    warehouseContainer.addView(row)
+                }
+            }
+            refreshStats()
+        }
+
+        refreshWarehouse()
 
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.menu_custom_filters)
             .setView(view)
             .setPositiveButton(R.string.action_save) { _, _ ->
-                val newSubs = editSubs.text.toString()
-                val subsChanged = newSubs.trim() != prefs.subscriptionUrls.trim()
+                val rawSubs = editSubs.text.toString()
+                val newUrls = rawSubs.lineSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
+                    .toList()
 
-                prefs.subscriptionUrls = newSubs
-                prefs.customBlocklist  = editBlocklist.text.toString()
-                prefs.customFilters    = editPatterns.text.toString()
+                prefs.customBlocklist = editBlocklist.text.toString()
+                prefs.customFilters = editPatterns.text.toString()
 
-                blocker.reloadCustomRules()
-                if (subsChanged) {
-                    blocker.refreshSubscriptionsAsync(force = true)
+                val existing = store.listAll().map { it.url }.toSet()
+                val toAdd = newUrls.filter { it !in existing }
+
+                if (toAdd.isEmpty()) {
+                    blocker.reloadCustomRules()
+                    Toast.makeText(
+                        this,
+                        R.string.custom_filters_saved,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        this,
+                        "Fetching " + toAdd.size + " new list(s)...",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    fetchNewLists(store, toAdd)
                 }
-
-                Toast.makeText(this, R.string.custom_filters_saved, Toast.LENGTH_SHORT).show()
             }
             .setNeutralButton(R.string.action_clear) { _, _ ->
                 prefs.customBlocklist = ""
-                prefs.customFilters   = ""
+                prefs.customFilters = ""
                 blocker.reloadCustomRules()
                 Toast.makeText(this, R.string.custom_filters_cleared, Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    private fun fetchNewLists(store: BlocklistStore, urls: List<String>) {
+        CoroutineScope(Dispatchers.IO).launch {
+            var ok = 0
+            var failed = 0
+            for (u in urls) {
+                val result = store.addAndFetch(u)
+                if (result.ok) ok++ else failed++
+            }
+            withContext(Dispatchers.Main) {
+                blocker.reloadCustomRules()
+                val msg = if (failed == 0) {
+                    "Added " + ok + " list(s)"
+                } else {
+                    "Added " + ok + ", " + failed + " failed"
+                }
+                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun humanSize(bytes: Long): String {
+        return when {
+            bytes >= 1024L * 1024L -> (bytes / (1024L * 1024L)).toString() + " MB"
+            bytes >= 1024L         -> (bytes / 1024L).toString() + " KB"
+            else                    -> bytes.toString() + " B"
+        }
+    }
+
+    private fun humanAge(ms: Long): String {
+        if (ms <= 0L) return "never"
+        val diff = System.currentTimeMillis() - ms
+        if (diff < 0L) return "just now"
+        val mins = diff / 60_000L
+        if (mins < 1L) return "just now"
+        if (mins < 60L) return mins.toString() + "m ago"
+        val hours = mins / 60L
+        if (hours < 24L) return hours.toString() + "h ago"
+        val days = hours / 24L
+        return days.toString() + "d ago"
     }
 
     // -------------------------------------------------------------------------
@@ -516,11 +620,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         if (view !== tabManager.getActiveWebView()) return
         updateFooterFor(url)
 
-        // Bug 3 fix: the internal home page has no favicon. Whenever the
-        // active tab lands on minimal://home — either because the user
-        // tapped Home in the menu, or because a real tab was closed and
-        // we fell back to a home-started neighbor — wipe both the pill
-        // icon and the tab's stored favicon so nothing stale lingers.
+        // Internal home has no favicon; wipe stale state on arrival.
         if (url.startsWith(Prefs.HOME_URL)) {
             tabManager.getActive()?.favicon = null
             binding.favicon.setImageDrawable(null)
