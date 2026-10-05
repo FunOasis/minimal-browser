@@ -37,19 +37,17 @@
     <string name="exit_message">This will close all tabs.</string>
     <string name="exit_confirm">Exit</string>
 
+    <string name="custom_filters_subscriptions_label">Subscription blocklists</string>
+    <string name="custom_filters_subscriptions_hint">One URL per line. Each is downloaded and parsed as a host list. Defaults point to Blocklist Project.</string>
     <string name="custom_filters_blocklist_label">Custom blocklist</string>
     <string name="custom_filters_blocklist_hint">One hostname per line. Subdomains are blocked automatically. Lines starting with # or ! are ignored.</string>
     <string name="custom_filters_patterns_label">Custom URL patterns</string>
-    <string name="custom_filters_patterns_hint">One URL substring per line. Any request whose URL contains it is blocked. Example: /ads/  or  track?</string>
-    <string name="custom_filters_subscriptions_label">Subscription blocklists</string>
-    <string name="custom_filters_subscriptions_hint">One URL per line. Each is downloaded and parsed as a host list. Defaults point to Blocklist Project.</string>
+    <string name="custom_filters_patterns_hint">One URL substring per line. Any request whose URL contains it is blocked. Example: /ads/ or track?</string>
     <string name="custom_filters_stats">Active: %1$d hosts, %2$d patterns</string>
-    <string name="custom_filters_saved">Filters saved. Refreshing subscriptions…</string>
+    <string name="custom_filters_saved">Filters saved. Refreshing subscriptions.</string>
     <string name="custom_filters_cleared">Filters cleared</string>
-    <string name="custom_filters_refresh_result">Subscriptions: %1$d sources, %2$d hosts</string>
     <string name="action_save">Save</string>
     <string name="action_clear">Clear</string>
-    <string name="action_refresh">Refresh</string>
 
     <string name="download_started">Downloading %1$s</string>
     <string name="download_failed">Download failed</string>
