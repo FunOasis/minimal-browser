@@ -15,7 +15,7 @@ class AdBlocker private constructor(
 ) {
 
     companion object {
-        private const val TAG        = "AdBlocker"
+        private const val TAG = "AdBlocker"
         private const val CACHE_SIZE = 8_000
         private val WHITESPACE = Regex("\\s+")
 
@@ -68,49 +68,70 @@ class AdBlocker private constructor(
     @Volatile private var hostTrie: SuffixTrie = SuffixTrie()
     @Volatile private var urlPatterns: Set<String> = emptySet()
     @Volatile private var hostCount: Int = 0
-
-    @Volatile private var baseHosts: Set<String> = emptySet()
     @Volatile private var basePatterns: Set<String> = emptySet()
+
+    @Volatile private var blocklistStore: BlocklistStore? = null
+    @Volatile private var prefs: Prefs? = null
 
     private val decisionCache = SimpleLruCache<String, Boolean>(CACHE_SIZE)
 
     init {
         if (preloadedHosts.isNotEmpty() || preloadedPatterns.isNotEmpty()) {
-            baseHosts = preloadedHosts
-            basePatterns = preloadedPatterns
             applyRules(preloadedHosts, preloadedPatterns)
         }
 
-        if (autoLoadFromAssets && context != null) {
+        val ctx = context
+        if (autoLoadFromAssets && ctx != null) {
+            blocklistStore = BlocklistStore.get(ctx)
+            prefs = Prefs.get(ctx)
+
             CoroutineScope(Dispatchers.IO).launch {
-                loadFromAssets(context)
-                applyMergedRules()
-                refreshSubscriptionsAsync(force = false)
+                loadBasePatterns(ctx)
+                seedDefaultsIfNeeded()
+                reloadAllRules()
+                // Second pass: refresh stale lists over the network, then
+                // rebuild the trie if anything actually changed on disk.
+                blocklistStore?.refreshAll(force = false)
+                reloadAllRules()
             }
         }
     }
 
-    private fun loadFromAssets(ctx: Context) {
-        val hostText   = readAssetText(ctx, "blocklist.txt")
+    private fun loadBasePatterns(ctx: Context) {
         val filterText = readAssetText(ctx, "filters.txt")
-
-        baseHosts    = parseHosts(hostText)
         basePatterns = parsePatterns(filterText)
     }
 
-    private fun applyMergedRules() {
-        val ctx = context ?: return
+    /**
+     * First-ever launch: the warehouse is empty, so seed the default
+     * subscription URLs. Every subsequent launch short-circuits here.
+     */
+    private suspend fun seedDefaultsIfNeeded() {
+        val store = blocklistStore ?: return
+        if (store.listAll().isNotEmpty()) return
+        val defaults = Prefs.DEFAULT_SUBSCRIPTION_URLS
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
+            .toList()
+        Log.i(TAG, "Seeding " + defaults.size + " default subscription lists")
+        for (url in defaults) {
+            store.addAndFetch(url)
+        }
+    }
 
-        val p = Prefs.get(ctx)
-        val customHosts    = parseHosts(p.customBlocklist)
-        val subHosts       = parseHosts(p.cachedSubscriptionHosts)
+    private suspend fun reloadAllRules() {
+        val store = blocklistStore ?: return
+        val p = prefs ?: return
+
+        val subHosts = store.loadAllHosts()
+        val customHosts = parseHosts(p.customBlocklist)
         val customPatterns = parsePatterns(p.customFilters)
 
-        val mergedHosts = buildSet {
-            addAll(baseHosts)
-            addAll(customHosts)
-            addAll(subHosts)
-        }
+        val mergedHosts = HashSet<String>(subHosts.size + customHosts.size)
+        mergedHosts.addAll(subHosts)
+        mergedHosts.addAll(customHosts)
+
         val mergedPatterns =
             if (customPatterns.isEmpty()) basePatterns else basePatterns + customPatterns
 
@@ -119,39 +140,25 @@ class AdBlocker private constructor(
     }
 
     fun reloadCustomRules() {
-        if (context == null) return
-        CoroutineScope(Dispatchers.IO).launch { applyMergedRules() }
+        val ctx = context ?: return
+        CoroutineScope(Dispatchers.IO).launch {
+            if (blocklistStore == null) blocklistStore = BlocklistStore.get(ctx)
+            if (prefs == null) prefs = Prefs.get(ctx)
+            reloadAllRules()
+        }
     }
 
     fun refreshSubscriptionsAsync(force: Boolean) {
         val ctx = context ?: return
         CoroutineScope(Dispatchers.IO).launch {
-            val p = Prefs.get(ctx)
-            val now = System.currentTimeMillis()
-            if (!force &&
-                now - p.subscriptionRefreshTime < Prefs.SUBSCRIPTION_REFRESH_INTERVAL_MS) {
-                return@launch
-            }
-
-            val urls = p.subscriptionUrls
-                .lineSequence()
-                .map { it.trim() }
-                .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
-                .toList()
-
-            if (urls.isEmpty()) return@launch
-
-            val result = BlocklistSubscriptions.fetch(urls)
-            if (result.hosts.isNotEmpty()) {
-                p.cachedSubscriptionHosts = result.hosts.joinToString("\n")
-                p.subscriptionRefreshTime = now
-            }
-            applyMergedRules()
-            Log.i(TAG, "Subscriptions: " + result.sourcesOk + " ok, " +
-                    result.sourcesFailed + " failed, " + result.hosts.size + " hosts")
+            if (blocklistStore == null) blocklistStore = BlocklistStore.get(ctx)
+            if (prefs == null) prefs = Prefs.get(ctx)
+            blocklistStore?.refreshAll(force)
+            reloadAllRules()
         }
     }
 
+    @Synchronized
     private fun applyRules(hosts: Set<String>, patterns: Set<String>) {
         val trie = SuffixTrie()
         for (h in hosts) trie.insert(reverseLabels(h))
@@ -179,7 +186,7 @@ class AdBlocker private constructor(
             val t = line.trim()
             if (t.isEmpty() || t.startsWith('#') || t.startsWith('!')) return@forEach
             val parts = t.split(WHITESPACE)
-            val host  = if (parts.size >= 2) parts[1] else parts[0]
+            val host = if (parts.size >= 2) parts[1] else parts[0]
             if (host.isNotBlank() && host != "0.0.0.0" && host != "127.0.0.1") {
                 out.add(host.lowercase())
             }
