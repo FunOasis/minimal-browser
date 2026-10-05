@@ -63,6 +63,7 @@ class TabManager(
             wv.loadUrl(url)
         } else {
             wv.visibility = View.GONE
+            wv.onPause()
         }
 
         onTabsChanged()
@@ -101,6 +102,19 @@ class TabManager(
     }
 
     fun findByWebView(wv: WebView): Tab? = _tabs.find { it.webView === wv }
+
+    fun pauseAll() {
+        for (tab in _tabs) {
+            tab.webView?.onPause()
+        }
+    }
+
+    fun resumeActive() {
+        for ((i, tab) in _tabs.withIndex()) {
+            val wv = tab.webView ?: continue
+            if (i == activeIndex) wv.onResume() else wv.onPause()
+        }
+    }
 
     fun destroyAll() {
         for (tab in _tabs) {
@@ -143,7 +157,14 @@ class TabManager(
 
     private fun syncVisibility() {
         for ((i, tab) in _tabs.withIndex()) {
-            tab.webView?.visibility = if (i == activeIndex) View.VISIBLE else View.GONE
+            val wv = tab.webView ?: continue
+            if (i == activeIndex) {
+                wv.visibility = View.VISIBLE
+                wv.onResume()
+            } else {
+                wv.visibility = View.GONE
+                wv.onPause()
+            }
         }
     }
 
@@ -166,6 +187,13 @@ class TabManager(
         wv.setBackgroundColor(activity.getColor(R.color.window_bg))
 
         WebViewConfigurator.apply(wv, prefs.javaScriptEnabled)
+
+        // Let the OS reclaim this renderer when the WebView isn't visible.
+        // Second arg (waivedWhenNotVisible) permits the renderer to be killed
+        // under memory pressure; it transparently reloads on switch back.
+        runCatching {
+            wv.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, true)
+        }
 
         wv.webViewClient = BlockingWebViewClient(
             blocker = blocker,
