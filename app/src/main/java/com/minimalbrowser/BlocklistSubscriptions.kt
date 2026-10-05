@@ -19,6 +19,7 @@ object BlocklistSubscriptions {
     private const val TAG = "BlocklistSubs"
     private const val TIMEOUT_MS = 15_000
     private const val USER_AGENT = "MinimalBrowser/1.0"
+    private val WHITESPACE = Regex("\\s+")
 
     data class FetchResult(
         val hosts: Set<String>,
@@ -39,10 +40,10 @@ object BlocklistSubscriptions {
                 val hosts = parseHosts(text)
                 allHosts.addAll(hosts)
                 ok++
-                Log.i(TAG, "Fetched $url -> ${hosts.size} hosts")
+                Log.i(TAG, "Fetched " + url + " -> " + hosts.size + " hosts")
             } catch (e: Exception) {
                 failed++
-                Log.w(TAG, "Fetch failed for $url: ${e.message}")
+                Log.w(TAG, "Fetch failed for " + url + ": " + e.message)
             }
         }
 
@@ -59,7 +60,7 @@ object BlocklistSubscriptions {
         }
         try {
             val code = conn.responseCode
-            if (code !in 200..299) throw RuntimeException("HTTP $code")
+            if (code !in 200..299) throw RuntimeException("HTTP " + code)
             return conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
         } finally {
             conn.disconnect()
@@ -98,6 +99,4 @@ object BlocklistSubscriptions {
         }
         return out
     }
-
-    private val WHITESPACE = Regex("\\s+")
 }
