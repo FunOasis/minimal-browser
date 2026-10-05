@@ -133,13 +133,16 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     override fun onResume() {
         super.onResume()
-        WebView.resumeTimers()
+        // pauseTimers/resumeTimers are instance methods whose effect is
+        // process-wide (they affect every WebView in the app), not static
+        // class methods. Calling on the active WebView is enough.
+        tabManager.getActiveWebView()?.resumeTimers()
         tabManager.resumeActive()
     }
 
     override fun onPause() {
         tabManager.pauseAll()
-        WebView.pauseTimers()
+        tabManager.getActiveWebView()?.pauseTimers()
         super.onPause()
     }
 
