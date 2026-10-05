@@ -154,6 +154,9 @@ class BlockingWebViewClient(
     override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)
         if (view == null) return
+        // Cosmetic cleanup: hide ad containers whose scripts we already
+        // blocked at the network layer. Idempotent and cheap.
+        CosmeticFilter.apply(view, url)
         ui.onPageLoadFinished(view)
         if (url != null) ui.onUrlChanged(view, url)
         ui.onNavStateChanged(view, view.canGoBack(), view.canGoForward())
