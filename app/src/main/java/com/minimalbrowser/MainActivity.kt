@@ -131,6 +131,18 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        WebView.resumeTimers()
+        tabManager.resumeActive()
+    }
+
+    override fun onPause() {
+        tabManager.pauseAll()
+        WebView.pauseTimers()
+        super.onPause()
+    }
+
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
