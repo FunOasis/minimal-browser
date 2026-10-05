@@ -20,18 +20,12 @@
         android:paddingTop="@dimen/topbar_padding_v"
         android:paddingBottom="@dimen/topbar_padding_v">
 
-        <ImageButton
-            android:id="@+id/btnBack"
-            style="@style/Widget.MinimalBrowser.IconButton"
-            android:src="@drawable/ic_arrow_back"
-            android:contentDescription="@string/cd_back" />
-
         <TextView
             android:id="@+id/tabBadge"
             android:layout_width="wrap_content"
             android:layout_height="32dp"
             android:layout_marginStart="2dp"
-            android:layout_marginEnd="2dp"
+            android:layout_marginEnd="4dp"
             android:background="@drawable/bg_tab_badge"
             android:gravity="center"
             android:minWidth="44dp"
@@ -47,9 +41,16 @@
 
         <ImageButton
             android:id="@+id/btnForward"
-            style="@style/Widget.MinimalBrowser.IconButton"
+            android:layout_width="@dimen/icon_button_size"
+            android:layout_height="@dimen/icon_button_size"
+            android:layout_marginStart="2dp"
+            android:layout_marginEnd="2dp"
+            android:background="@drawable/bg_icon_glass"
+            android:contentDescription="@string/cd_forward"
+            android:padding="@dimen/icon_button_padding"
+            android:scaleType="centerInside"
             android:src="@drawable/ic_arrow_forward"
-            android:contentDescription="@string/cd_forward" />
+            android:tint="@color/icon_primary" />
 
         <LinearLayout
             android:id="@+id/urlPill"
@@ -94,10 +95,15 @@
 
         <ImageButton
             android:id="@+id/btnMenu"
-            style="@style/Widget.MinimalBrowser.IconButton"
+            android:layout_width="@dimen/icon_button_size"
+            android:layout_height="@dimen/icon_button_size"
             android:layout_marginStart="4dp"
+            android:background="@drawable/bg_icon_glass"
+            android:contentDescription="@string/cd_menu"
+            android:padding="@dimen/icon_button_padding"
+            android:scaleType="centerInside"
             android:src="@drawable/ic_menu"
-            android:contentDescription="@string/cd_menu" />
+            android:tint="@color/icon_primary" />
     </LinearLayout>
 
     <com.google.android.material.progressindicator.LinearProgressIndicator
