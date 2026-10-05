@@ -70,10 +70,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             wv.canScrollVertically(-1)
         }
 
-        binding.btnBack.setOnClickListener {
-            val wv = tabManager.getActiveWebView()
-            if (wv != null && wv.canGoBack()) wv.goBack()
-        }
         binding.btnForward.setOnClickListener {
             val wv = tabManager.getActiveWebView()
             if (wv != null && wv.canGoForward()) wv.goForward()
@@ -133,9 +129,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     override fun onResume() {
         super.onResume()
-        // pauseTimers/resumeTimers are instance methods whose effect is
-        // process-wide (they affect every WebView in the app), not static
-        // class methods. Calling on the active WebView is enough.
         tabManager.getActiveWebView()?.resumeTimers()
         tabManager.resumeActive()
     }
@@ -356,7 +349,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     override fun onNavStateChanged(view: WebView, canGoBack: Boolean, canGoForward: Boolean) {
         if (view !== tabManager.getActiveWebView()) return
-        binding.btnBack.isEnabled    = canGoBack
         binding.btnForward.isEnabled = canGoForward
     }
 
