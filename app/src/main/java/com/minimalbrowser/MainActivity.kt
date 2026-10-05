@@ -160,10 +160,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         super.onDestroy()
     }
 
-    // ---------------------------------------------------------------------
-    // Menu
-    // ---------------------------------------------------------------------
-
     private fun showOverflowMenu(anchor: View) {
         val themedContext = ContextThemeWrapper(
             this,
@@ -242,10 +238,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         else -> false
     }
 
-    // ---------------------------------------------------------------------
-    // Tab switcher / exit confirm / custom filters / shortcut
-    // ---------------------------------------------------------------------
-
     private fun showTabSwitcher() {
         TabSwitcherSheet(this, tabManager) { visible ->
             if (visible) {
@@ -301,10 +293,12 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     private fun showCustomFiltersDialog() {
         val view = layoutInflater.inflate(R.layout.dialog_custom_filters, null)
+        val editSubs      = view.findViewById<EditText>(R.id.editSubscriptions)
         val editBlocklist = view.findViewById<EditText>(R.id.editBlocklist)
         val editPatterns  = view.findViewById<EditText>(R.id.editPatterns)
         val statsView     = view.findViewById<TextView>(R.id.customFilterStats)
 
+        editSubs.setText(prefs.subscriptionUrls)
         editBlocklist.setText(prefs.customBlocklist)
         editPatterns.setText(prefs.customFilters)
 
@@ -315,9 +309,18 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             .setTitle(R.string.menu_custom_filters)
             .setView(view)
             .setPositiveButton(R.string.action_save) { _, _ ->
-                prefs.customBlocklist = editBlocklist.text.toString()
-                prefs.customFilters   = editPatterns.text.toString()
+                val newSubs = editSubs.text.toString()
+                val subsChanged = newSubs.trim() != prefs.subscriptionUrls.trim()
+
+                prefs.subscriptionUrls = newSubs
+                prefs.customBlocklist  = editBlocklist.text.toString()
+                prefs.customFilters    = editPatterns.text.toString()
+
                 blocker.reloadCustomRules()
+                if (subsChanged) {
+                    blocker.refreshSubscriptionsAsync(force = true)
+                }
+
                 Toast.makeText(this, R.string.custom_filters_saved, Toast.LENGTH_SHORT).show()
             }
             .setNeutralButton(R.string.action_clear) { _, _ ->
@@ -329,11 +332,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
-
-    // ---------------------------------------------------------------------
-    // BrowserUiListener — all callbacks carry the originating WebView so we
-    // can ignore events from inactive tabs.
-    // ---------------------------------------------------------------------
 
     override fun onUrlChanged(view: WebView, url: String) {
         if (view !== tabManager.getActiveWebView()) return
@@ -389,10 +387,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             contentLength = -1L
         )
     }
-
-    // ---------------------------------------------------------------------
-    // Helpers
-    // ---------------------------------------------------------------------
 
     private fun loadHome() {
         val wv = tabManager.getActiveWebView() ?: return
