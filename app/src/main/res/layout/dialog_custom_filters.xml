@@ -13,12 +13,48 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <!-- ===================== Blocklist ===================== -->
+        <!-- ===================== Subscriptions ===================== -->
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
+            android:text="@string/custom_filters_subscriptions_label"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="8dp"
+            android:text="@string/custom_filters_subscriptions_hint"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+        <EditText
+            android:id="@+id/editSubscriptions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_input_field"
+            android:fontFamily="monospace"
+            android:gravity="top|start"
+            android:importantForAutofill="no"
+            android:inputType="textMultiLine|textUri|textNoSuggestions"
+            android:maxLines="4"
+            android:minLines="2"
+            android:padding="12dp"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_tertiary"
+            android:textSize="13sp" />
+
+        <!-- ===================== Blocklist ===================== -->
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
             android:text="@string/custom_filters_blocklist_label"
             android:textColor="@color/text_primary"
             android:textSize="14sp"
@@ -42,8 +78,8 @@
             android:gravity="top|start"
             android:importantForAutofill="no"
             android:inputType="textMultiLine|textNoSuggestions"
-            android:maxLines="8"
-            android:minLines="4"
+            android:maxLines="6"
+            android:minLines="3"
             android:padding="12dp"
             android:textColor="@color/text_primary"
             android:textColorHint="@color/text_tertiary"
@@ -78,8 +114,8 @@
             android:gravity="top|start"
             android:importantForAutofill="no"
             android:inputType="textMultiLine|textNoSuggestions"
-            android:maxLines="6"
-            android:minLines="3"
+            android:maxLines="5"
+            android:minLines="2"
             android:padding="12dp"
             android:textColor="@color/text_primary"
             android:textColorHint="@color/text_tertiary"
