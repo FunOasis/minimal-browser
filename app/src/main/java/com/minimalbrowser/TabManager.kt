@@ -19,7 +19,9 @@ class TabManager(
     private val ui: BrowserUiListener,
     private val onProgress: (Int) -> Unit,
     private val onFavicon: (Bitmap?) -> Unit,
-    private val onTabsChanged: () -> Unit
+    private val onTabsChanged: () -> Unit,
+    private val onFullscreenShow: (View, WebChromeClient.CustomViewCallback) -> Unit,
+    private val onFullscreenHide: () -> Unit
 ) {
 
     companion object {
@@ -67,10 +69,23 @@ class TabManager(
     private var activeIndex = 0
     private var nextId = 1L
 
+    // True between onShowCustomView and onHideCustomView. Guards against
+    // a second onShowCustomView firing while we are already showing a
+    // custom view, and lets destroyAll() know whether the host needs to
+    // be told to restore its chrome.
+    private var fullscreenActive: Boolean = false
+
     fun count(): Int = _tabs.size
     fun getActiveIndex(): Int = activeIndex
     fun getActive(): Tab? = _tabs.getOrNull(activeIndex)
     fun getActiveWebView(): WebView? = getActive()?.webView
+
+    /**
+     * True while a page is showing a custom fullscreen view (video,
+     * manga reader, generic Fullscreen API call). The host uses this to
+     * decide whether Back should exit fullscreen instead of navigating.
+     */
+    fun isInFullscreen(): Boolean = fullscreenActive
 
     fun create(url: String = Prefs.HOME_URL, makeActive: Boolean = true): Tab {
         evictForSpace()
@@ -261,6 +276,17 @@ class TabManager(
     }
 
     fun destroyAll() {
+        // If a page is currently showing a custom fullscreen view, tell
+        // the host to restore its chrome before we tear the tabs down.
+        // Otherwise the toolbar stays hidden after the tabs are gone.
+        if (fullscreenActive) {
+            fullscreenActive = false
+            try {
+                onFullscreenHide()
+            } catch (_: Throwable) {
+                // ignore
+            }
+        }
         for (tab in _tabs) {
             tab.webView?.let { destroyWebView(it) }
             tab.webView = null
@@ -390,6 +416,8 @@ class TabManager(
 
         wv.addJavascriptInterface(tab.scrollBridge, PageScrollProbe.JS_INTERFACE_NAME)
 
+        // Attach the blob-download bridge so pages that call
+        // URL.createObjectURL + a[download] can hand us the bytes.
         BlobDownloadHelper.install(wv)
 
         WebViewConfigurator.apply(wv, prefs.javaScriptEnabled)
@@ -404,16 +432,16 @@ class TabManager(
             ui = ui
         )
         wv.webChromeClient = TabWebChromeClient(tab)
-        
-        wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->    
-            DownloadHandler.handle(        
-                activity = activity,        
-                webView = wv,        
-                url = url,        
-                userAgent = userAgent,        
-                contentDisposition = contentDisposition,        
-                mimeType = mimeType,        
-                contentLength = contentLength    
+
+        wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
+            DownloadHandler.handle(
+                activity = activity,
+                webView = wv,
+                url = url,
+                userAgent = userAgent,
+                contentDisposition = contentDisposition,
+                mimeType = mimeType,
+                contentLength = contentLength
             )
         }
 
@@ -467,6 +495,49 @@ class TabManager(
             (msg.obj as? WebView.WebViewTransport)?.webView = trap
             msg.sendToTarget()
             return true
+        }
+
+        /**
+         * Fullscreen API entry. Sites that call requestFullscreen() --
+         * video players, manga readers, PDF viewers, generic "full screen"
+         * buttons -- end up here. WebView hands us a View containing the
+         * fullscreen content. We forward it to MainActivity, which
+         * attaches it above the toolbar, hides the chrome, and enables
+         * immersive system UI.
+         *
+         * Guarded against reentry: some sites fire requestFullscreen()
+         * twice in a row. If we are already showing a custom view, the
+         * second request is rejected and its callback immediately
+         * dismissed, which matches Chrome's behaviour.
+         */
+        override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+            if (fullscreenActive) {
+                try { callback.onCustomViewHidden() } catch (_: Throwable) {}
+                return
+            }
+            fullscreenActive = true
+            try {
+                onFullscreenShow(view, callback)
+            } catch (t: Throwable) {
+                Log.w(TAG, "onShowCustomView host failed: " + t.message)
+                fullscreenActive = false
+                try { callback.onCustomViewHidden() } catch (_: Throwable) {}
+            }
+        }
+
+        /**
+         * Fullscreen API exit. Either the site called exitFullscreen(),
+         * or MainActivity signalled the callback to take us out (Back
+         * button). Either way, WebView routes here for the cleanup.
+         */
+        override fun onHideCustomView() {
+            if (!fullscreenActive) return
+            fullscreenActive = false
+            try {
+                onFullscreenHide()
+            } catch (t: Throwable) {
+                Log.w(TAG, "onHideCustomView host failed: " + t.message)
+            }
         }
     }
 }
