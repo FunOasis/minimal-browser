@@ -101,27 +101,15 @@ class BlockingWebViewClient(
     }
 
     private fun isDownloadUrl(uri: Uri): Boolean {
-        // GitHub serves /blob/ and /tree/ URLs as HTML viewer pages, not
-        // as file downloads. Those URLs happen to end with a real file
-        // extension (README.md, file.json, Main.java) so the naive
-        // "URL ends with a known extension" rule intercepts every file
-        // navigation in a repository and tries to download the HTML
-        // viewer page. That is what produced the spurious
-        // "Download failed" toast on github.com.
-        //
-        // We let these URLs load normally in the WebView. If the user
-        // then clicks GitHub's own "Raw" or "Download raw file" button,
-        // the browser is handed a /raw/... or raw.githubusercontent.com
-        // URL, which does NOT contain /blob/ and therefore still flows
-        // through the download path below.
+        // GitHub / GitLab / Bitbucket web viewer URLs end in real file
+        // extensions but are HTML pages, not downloads. Let them load
+        // normally. Real raw URLs use /raw/ or raw.githubusercontent.com
+        // and are unaffected.
         val host = uri.host?.lowercase()
         if (host == "github.com" || host == "www.github.com") {
             val path = uri.path.orEmpty()
             if (path.contains("/blob/") || path.contains("/tree/")) return false
         }
-        // Same story for GitLab and Bitbucket: their web viewers use
-        // /-/blob/, /src/, and /browse/ path segments that look like
-        // files but are HTML pages.
         if (host == "gitlab.com" || host == "www.gitlab.com") {
             val path = uri.path.orEmpty()
             if (path.contains("/-/blob/") || path.contains("/-/tree/")) return false
@@ -176,6 +164,11 @@ class BlockingWebViewClient(
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
         if (view == null) return
+        // Install the blob-capture hook before any page script runs.
+        // GitHub (and most other sites) create their download blobs via
+        // URL.createObjectURL and immediately revoke them -- if we miss
+        // the synchronous capture window we cannot read the bytes later.
+        BlobDownloadHelper.injectCapture(view, url)
         ui.onPageLoadStarted(view)
         if (url != null) ui.onUrlChanged(view, url)
         ui.onNavStateChanged(view, view.canGoBack(), view.canGoForward())
@@ -184,12 +177,11 @@ class BlockingWebViewClient(
     override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)
         if (view == null) return
-        // Cosmetic cleanup: hide ad containers whose scripts we already
-        // blocked at the network layer. Idempotent and cheap.
+        // Idempotent safety net: some SPA navigations never fire
+        // onPageStarted for the new document. The script itself checks
+        // a window marker, so a second call is free.
+        BlobDownloadHelper.injectCapture(view, url)
         CosmeticFilter.apply(view, url)
-        // Install the scroll probe. Feeds ScrollStateBridge the true
-        // scroll offset, including inner-div scrollers that the WebView
-        // APIs cannot see. Idempotent via a window marker.
         PageScrollProbe.install(view, url)
         ui.onPageLoadFinished(view)
         if (url != null) ui.onUrlChanged(view, url)
