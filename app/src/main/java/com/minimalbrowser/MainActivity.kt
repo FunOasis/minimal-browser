@@ -1,7 +1,6 @@
 package com.minimalbrowser
 
 import android.annotation.SuppressLint
-import android.app.DownloadManager
 import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.graphics.Bitmap
