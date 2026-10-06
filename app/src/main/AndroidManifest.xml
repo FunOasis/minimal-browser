@@ -42,6 +42,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".DownloadsActivity"
+            android:exported="false"
+            android:label="@string/downloads_title"
+            android:parentActivityName=".MainActivity" />
+
     </application>
 
 </manifest>
