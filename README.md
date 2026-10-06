@@ -1,40 +1,46 @@
-# Minimal Browser for Android
+# Minimal Browser
 
-A lightweight Android browser with built-in host-based ad blocking.
+A small, fast Android WebView browser with host-based ad blocking
+and subscription-driven cosmetic filtering.
 
 ## Features
 
-- WebView-based browser with multi-tab support-ready architecture
-- Host-based ad and tracker blocking
+- Multi-tab UI (up to 6 live tabs, LRU eviction)
+- Host-based ad/tracker blocking from remote subscription lists
+- Cosmetic filtering from EasyList-format subscriptions
 - URL keyword pattern blocking
-- JavaScript toggle (on/off persisted between sessions)
-- Custom homepage
-- Pull-to-refresh
-- Handles links from other apps
+- Address-bar suggestions from local visit history
+- Add to home screen (launcher shortcut per page)
+- JavaScript toggle
+- Pull-to-refresh, downloads via system DownloadManager
+
+## Architecture
+
+Rule storage lives in two warehouses under the app private directory:
+
+- `filesDir/blocklists/` — one ZIP per host-list subscription,
+  merged into a single sorted `LongArray` of FNV-1a hashes
+  (`HostSet`). ~1.2 MB for 150k hosts.
+- `filesDir/cosmetics/` — one ZIP per EasyList-format subscription,
+  parsed at boot into generic + per-domain selector sets
+  (`CosmeticRules`) and injected as one CSS block per navigation.
+  No MutationObserver, no runtime DOM walks.
+
+A `WorkManager` job refreshes both warehouses every 12 hours. Lists
+carry their own freshness windows (24h for hosts, 72h for cosmetics)
+and conditional-GET validators, so repeat runs are cheap.
 
 ## Build
 
-This project is built **entirely on GitHub Actions**. No local tooling required.
-
-1. Push to `main`, open a PR, or run the workflow manually from **Actions → Build APK → Run workflow**.
-2. When the run completes, download the artifact `MinimalBrowser-debug` from the run summary page.
-3. Unzip → install `app-debug.apk` on an arm64 Android device.
-
-## Supported ABIs
-
-- `arm64-v8a` (real devices)
-- `x86_64` (emulator)
+Built entirely on GitHub Actions. Push to `main` or run the
+**Build APK** workflow manually from the Actions tab. The debug
+artifact is published on the run summary page.
 
 ## Blocklist format
 
-`app/src/main/assets/blocklist.txt` — one host per line. Compatible with
-StevenBlack/hosts format (hosts-file layout). Replace the starter list for
-full coverage:
-curl -o app/src/main/assets/blocklist.txt
-https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
-
-`app/src/main/assets/filters.txt` — one URL keyword per line; a request whose
-URL contains the keyword is blocked.
+Host lists are standard hosts-file or Adblock-Plus `||domain^`
+lines. Cosmetic lists are EasyList-format `##` / `#@#` rules;
+procedural rules (`:has()`, `:has-text()`, `#?#`) are ignored.
 
 ## License
 
