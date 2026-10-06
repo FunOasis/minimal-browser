@@ -490,12 +490,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             true
         }
 
-        R.id.action_downloads -> {
-            try {
-                startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
-            } catch (_: Exception) {
-                Toast.makeText(this, R.string.download_no_app, Toast.LENGTH_SHORT).show()
-            }
+        R.id.action_downloads -> {    
+            startActivity(Intent(this, DownloadsActivity::class.java))    
             true
         }
 
