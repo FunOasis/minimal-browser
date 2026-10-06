@@ -313,10 +313,42 @@ class TabManager(
     }
 
     private fun destroyTabAt(index: Int) {
+        // If the tab being destroyed is the one currently presenting a
+        // fullscreen custom view, release that session first. The
+        // fullscreen surface is a View the WebView handed to the host
+        // and lives on android.R.id.content, not inside the WebView --
+        // destroying the WebView without dismissing it leaves an
+        // orphaned black surface over a chrome-less UI.
+        releaseFullscreenIfActive(index)
+
         val tab = _tabs.removeAt(index)
         tab.webView?.url?.let { live -> if (live.isNotBlank()) tab.url = live }
         tab.webView?.let { destroyWebView(it) }
         tab.webView = null
+    }
+
+    /**
+     * If the tab at the given index owns the current fullscreen
+     * session, ask the host to tear it down (restore chrome, detach
+     * the surface, exit immersive mode). Safe to call for any index;
+     * no-op when fullscreen is not active or the index is not the
+     * fullscreen owner.
+     *
+     * This exists because the fullscreen surface is not parented to
+     * the WebView. Everything that destroys a WebView must therefore
+     * consider whether that WebView was the source of an active
+     * fullscreen session. Otherwise the user is left staring at a
+     * dead black surface with no toolbar.
+     */
+    private fun releaseFullscreenIfActive(index: Int) {
+        if (!fullscreenActive) return
+        if (index != activeIndex) return
+        fullscreenActive = false
+        try {
+            onFullscreenHide()
+        } catch (t: Throwable) {
+            Log.w(TAG, "releaseFullscreenIfActive host failed: " + t.message)
+        }
     }
 
     /**
@@ -341,6 +373,15 @@ class TabManager(
         val tab = _tabs.getOrNull(index) ?: return
         if (tab.frozen) return
         val wv = tab.webView ?: return
+
+        // If this tab is the one showing a fullscreen custom view,
+        // dismiss it before we release the renderer. Otherwise the
+        // surface stays attached, the chrome stays hidden, and the
+        // user comes back from a long screen-lock to a black screen
+        // with no toolbar, no urlbar, no menu. Force-close is the only
+        // recovery from that state, because Back routes into
+        // requestExitFullscreen() on a callback whose WebView is gone.
+        releaseFullscreenIfActive(index)
 
         // Capture the live URL before dropping the view. The WebView may
         // have navigated since we last saw it.
