@@ -101,6 +101,36 @@ class BlockingWebViewClient(
     }
 
     private fun isDownloadUrl(uri: Uri): Boolean {
+        // GitHub serves /blob/ and /tree/ URLs as HTML viewer pages, not
+        // as file downloads. Those URLs happen to end with a real file
+        // extension (README.md, file.json, Main.java) so the naive
+        // "URL ends with a known extension" rule intercepts every file
+        // navigation in a repository and tries to download the HTML
+        // viewer page. That is what produced the spurious
+        // "Download failed" toast on github.com.
+        //
+        // We let these URLs load normally in the WebView. If the user
+        // then clicks GitHub's own "Raw" or "Download raw file" button,
+        // the browser is handed a /raw/... or raw.githubusercontent.com
+        // URL, which does NOT contain /blob/ and therefore still flows
+        // through the download path below.
+        val host = uri.host?.lowercase()
+        if (host == "github.com" || host == "www.github.com") {
+            val path = uri.path.orEmpty()
+            if (path.contains("/blob/") || path.contains("/tree/")) return false
+        }
+        // Same story for GitLab and Bitbucket: their web viewers use
+        // /-/blob/, /src/, and /browse/ path segments that look like
+        // files but are HTML pages.
+        if (host == "gitlab.com" || host == "www.gitlab.com") {
+            val path = uri.path.orEmpty()
+            if (path.contains("/-/blob/") || path.contains("/-/tree/")) return false
+        }
+        if (host == "bitbucket.org" || host == "www.bitbucket.org") {
+            val path = uri.path.orEmpty()
+            if (path.contains("/src/") || path.contains("/browse/")) return false
+        }
+
         val last = uri.lastPathSegment ?: return false
         val dot = last.lastIndexOf('.')
         if (dot <= 0 || dot == last.length - 1) return false
@@ -150,7 +180,7 @@ class BlockingWebViewClient(
         if (url != null) ui.onUrlChanged(view, url)
         ui.onNavStateChanged(view, view.canGoBack(), view.canGoForward())
     }
-        
+
     override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)
         if (view == null) return
