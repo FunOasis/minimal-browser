@@ -10,29 +10,29 @@ import android.os.Environment
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.MimeTypeMap
+import android.webkit.WebView
 import android.widget.Toast
 import java.net.URLDecoder
 
 /**
- * Bridges WebView's DownloadListener to Android's system DownloadManager.
+ * Bridges WebView's DownloadListener to Android's system DownloadManager,
+ * with a JS-mediated fallback for blob: and data: URLs.
  *
- * ─── Filename fidelity ────────────────────────────────────────────────
- * This class replaces URLUtil.guessFileName() with an explicit resolver
- * because the framework helper trusts the server's Content-Type over the
- * URL's own extension. Real-world servers routinely lie:
+ * Routing:
+ *   http://, https://          -> DownloadManager (existing path)
+ *   blob:                      -> BlobDownloadHelper (JS-mediated)
+ *   data:                      -> BlobDownloadHelper (inline decode)
+ *   anything else              -> reject with a toast
  *
- *   • GitHub raw URLs serve  README.md  as  text/plain
- *   • Many CDNs serve        bundle.js  as  text/plain
- *   • Video hosts often send             clip.mp4  as application/octet-stream
+ * Filename fidelity (unchanged from before):
+ *   URLUtil.guessFileName() is replaced with an explicit resolver
+ *   because it trusts the server's Content-Type over the URL's own
+ *   extension. Real-world servers routinely lie, producing names like
+ *   README.md.txt, bundle.js.txt, clip.bin, which break every
+ *   downstream tool that keys off the extension.
  *
- * That produces downloads named  README.md.txt , bundle.js.txt , clip.bin ,
- * which breaks every downstream tool that keys off the extension.
- *
- * Our priority is strict: URL extension > Content-Disposition extension >
- * MIME-derived extension. The chosen extension is then also used to pick
- * the MIME type we hand to DownloadManager, so MediaStore never gets a
- * chance to re-classify the file behind our back.
- * ──────────────────────────────────────────────────────────────────────
+ *   Priority: URL extension > Content-Disposition extension >
+ *   MIME-derived extension.
  */
 object DownloadHandler {
 
@@ -42,11 +42,6 @@ object DownloadHandler {
     private const val FALLBACK_MIME = "application/octet-stream"
     private const val MAX_FILENAME_LENGTH = 200
 
-    /**
-     * Android's MimeTypeMap is missing several common developer-file
-     * extensions. Without these overrides, a .md file with no Content-Type
-     * hint on the server would fall through to octet-stream.
-     */
     private val MIME_OVERRIDES = mapOf(
         "md"       to "text/markdown",
         "markdown" to "text/markdown",
@@ -87,8 +82,16 @@ object DownloadHandler {
     // Public entry points
     // -------------------------------------------------------------------------
 
+    /**
+     * Handle a download request from WebView.
+     *
+     * The WebView is required for blob: URLs -- the JS read must run in
+     * the same document that created the blob. For http(s) it is unused
+     * and may be null in tests.
+     */
     fun handle(
         activity: Activity,
+        webView: WebView?,
         url: String,
         userAgent: String?,
         contentDisposition: String?,
@@ -98,9 +101,41 @@ object DownloadHandler {
         if (url.isBlank()) return
 
         val scheme = runCatching { Uri.parse(url).scheme?.lowercase() }.getOrNull()
-        if (scheme == "blob" || scheme == "data") {
-            toast(activity, activity.getString(R.string.download_unsupported))
-            return
+
+        when (scheme) {
+            "blob" -> {
+                if (webView == null) {
+                    toast(activity, activity.getString(R.string.download_failed))
+                    return
+                }
+                val name = blobFallbackName(url, mimeType)
+                BlobDownloadHelper.start(
+                    activity = activity,
+                    webView = webView,
+                    blobUrl = url,
+                    fileName = name,
+                    mimeType = mimeType
+                )
+                return
+            }
+            "data" -> {
+                val name = dataFallbackName(mimeType)
+                BlobDownloadHelper.startDataUrl(
+                    activity = activity,
+                    dataUrl = url,
+                    fileName = name,
+                    mimeType = mimeType
+                )
+                return
+            }
+            "http", "https" -> {
+                // fall through to the DownloadManager path below
+            }
+            else -> {
+                Log.w(TAG, "Unsupported download scheme: " + scheme)
+                toast(activity, activity.getString(R.string.download_unsupported))
+                return
+            }
         }
 
         if (needsStoragePermission(activity)) {
@@ -140,6 +175,28 @@ object DownloadHandler {
             PackageManager.PERMISSION_GRANTED
     }
 
+    /**
+     * Filename for a blob: URL. The blob URL itself looks like
+     * "blob:https://example.com/7e9a..." -- no useful tail. So we
+     * synthesize a name from the MIME type and let the JS side
+     * override via the blob's own type if it differs.
+     */
+    private fun blobFallbackName(url: String, mimeType: String?): String {
+        val ext = mimeType
+            ?.let { MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
+            ?.takeIf { it.isNotBlank() }
+            ?: "bin"
+        return "download_" + System.currentTimeMillis() + "." + ext
+    }
+
+    private fun dataFallbackName(mimeType: String?): String {
+        val ext = mimeType
+            ?.let { MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
+            ?.takeIf { it.isNotBlank() }
+            ?: "bin"
+        return "download_" + System.currentTimeMillis() + "." + ext
+    }
+
     private fun enqueue(
         context: Context,
         url: String,
@@ -150,10 +207,6 @@ object DownloadHandler {
         try {
             val filename = guessFilename(url, contentDisposition, mimeType)
 
-            // Derive the MIME type we hand to DownloadManager from the
-            // filename's extension — never from the server. That's what
-            // stops MediaStore from second-guessing the extension on
-            // API 29+ scoped storage.
             val ext = filename.substringAfterLast('.', "").lowercase()
             val chosenMime =
                 if (ext.isBlank()) mimeType ?: FALLBACK_MIME
@@ -174,8 +227,6 @@ object DownloadHandler {
                 setAllowedOverRoaming(true)
             }
 
-            // Preserve session cookies and User-Agent so auth-gated
-            // downloads still work.
             CookieManager.getInstance().getCookie(url)?.let { cookie ->
                 if (cookie.isNotBlank()) request.addRequestHeader("Cookie", cookie)
             }
@@ -188,22 +239,11 @@ object DownloadHandler {
 
             toast(context, context.getString(R.string.download_started, filename))
         } catch (t: Throwable) {
-            Log.w(TAG, "enqueue failed: ${t.message}")
+            Log.w(TAG, "enqueue failed: " + t.message)
             toast(context, context.getString(R.string.download_failed))
         }
     }
 
-    /**
-     * Resolve the on-disk filename.
-     *
-     * Priority, highest first:
-     *   1. URL extension + Content-Disposition stem (best of both worlds)
-     *   2. URL path segment, if it has an extension
-     *   3. Content-Disposition filename, if it has an extension
-     *   4. URL path segment, even without an extension
-     *   5. Content-Disposition filename, even without an extension
-     *   6. Synthesized "download_<ts>.<ext>" from the MIME type
-     */
     private fun guessFilename(
         url: String,
         contentDisposition: String?,
@@ -215,48 +255,31 @@ object DownloadHandler {
         val cdName  = parseContentDisposition(contentDisposition)
         val cdExt   = cdName?.fileExtension()
 
-        // Case 1 — URL has an extension. It wins.
         if (urlName != null && urlExt != null) {
             if (cdName != null) {
-                // Prefer the Content-Disposition stem when it exists (it's
-                // usually cleaner than a URL with cache-busting hashes) but
-                // keep the URL's extension verbatim.
                 val cdStem = cdName.substringBeforeLast('.', cdName).trim()
-                if (cdStem.isNotBlank()) return sanitize("$cdStem.$urlExt")
+                if (cdStem.isNotBlank()) return sanitize(cdStem + "." + urlExt)
             }
             return sanitize(urlName)
         }
 
-        // Case 2 — URL has no extension, but Content-Disposition does.
         if (cdName != null && cdExt != null) return sanitize(cdName)
-
-        // Case 3 — URL name exists without an extension.
         if (urlName != null) return sanitize(urlName)
-
-        // Case 4 — Content-Disposition name exists without an extension.
         if (cdName != null) return sanitize(cdName)
 
-        // Case 5 — Nothing usable. Synthesize from MIME + timestamp.
         val ext = mimeType
             ?.let { MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
             ?.takeIf { it.isNotBlank() }
             ?: "bin"
-        return "download_${System.currentTimeMillis()}.$ext"
+        return "download_" + System.currentTimeMillis() + "." + ext
     }
 
     private fun mimeForExtension(ext: String, serverMime: String?): String {
         MIME_OVERRIDES[ext]?.let { return it }
         MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)?.let { return it }
-        // Server MIME is a last resort. If it disagrees with the extension,
-        // we still prefer to publish the extension-derived one — but if
-        // neither map knows the extension, the server is our only clue.
         return serverMime?.takeIf { it.isNotBlank() } ?: FALLBACK_MIME
     }
 
-    /**
-     * Return the last path segment of the URL, stripping query and fragment.
-     * Returns null if the URL ends in "/" or has no path segment.
-     */
     private fun lastPathSegment(url: String): String? = runCatching {
         Uri.parse(url).lastPathSegment
     }.getOrNull()
@@ -264,11 +287,6 @@ object DownloadHandler {
         ?.substringBefore('#')
         ?.takeIf { it.isNotBlank() && it != "/" }
 
-    /**
-     * Extract a lowercase extension from a filename, or null if there isn't
-     * a sensible one. Rejects "v1.2.3" (numeric tail) and other false
-     * positives that would poison the URL-priority rule.
-     */
     private fun String.fileExtension(): String? {
         val dot = lastIndexOf('.')
         if (dot <= 0 || dot == length - 1) return null
@@ -279,14 +297,6 @@ object DownloadHandler {
         return ext
     }
 
-    /**
-     * Parse a Content-Disposition header into a filename. Handles both
-     * the classic quoted form and the RFC 5987 extended form used for
-     * non-ASCII names:
-     *
-     *   attachment; filename="Annual Report 2026.pdf"
-     *   attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf
-     */
     private fun parseContentDisposition(header: String?): String? {
         if (header.isNullOrBlank()) return null
 
@@ -301,10 +311,8 @@ object DownloadHandler {
         var name = extended?.takeIf { it.isNotBlank() } ?: classic ?: return null
         if (name.isBlank()) return null
 
-        // Strip any path separators that snuck in.
         name = name.substringAfterLast('/').substringAfterLast('\\')
 
-        // Decode percent escapes (RFC 5987 or a sloppy server).
         if (name.contains('%')) {
             name = runCatching { URLDecoder.decode(name, "UTF-8") }.getOrDefault(name)
         }
@@ -312,12 +320,6 @@ object DownloadHandler {
         return name.takeIf { it.isNotBlank() && it != "." && it != ".." }
     }
 
-    /**
-     * Make a filename safe for DownloadManager without ever changing its
-     * extension. Slashes become underscores, trailing dots/whitespace are
-     * trimmed, and the total length is capped at 200 chars while keeping
-     * the extension intact.
-     */
     private fun sanitize(name: String): String {
         var cleaned = name
             .replace('/', '_')
@@ -329,7 +331,7 @@ object DownloadHandler {
             val ext = cleaned.substringAfterLast('.', "")
             val stem = cleaned.substringBeforeLast('.', cleaned)
             val keep = (MAX_FILENAME_LENGTH - (ext.length + 1)).coerceAtLeast(1)
-            cleaned = stem.take(keep) + if (ext.isBlank()) "" else ".$ext"
+            cleaned = stem.take(keep) + if (ext.isBlank()) "" else "." + ext
         }
 
         if (cleaned.isBlank() || cleaned == "." || cleaned == "..") return "download"
