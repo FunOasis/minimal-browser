@@ -78,10 +78,11 @@ class DownloadRepository(private val appContext: Context) {
     // ----------------------------------------------------------------
 
     fun listAll(): List<Item> {
-        val query = DownloadManager.Query().setSortingOrder(
-            DownloadManager.COLUMN_LAST_MODIFIED_TIMESTAMP,
-            DownloadManager.Query.ORDER_DESCENDING
-        )
+        // The public SDK does not expose a sort hint on
+        // DownloadManager.Query, so we fetch all rows and sort them in
+        // Kotlin below. The list is tiny (tens of rows at most), so the
+        // cost is nil.
+        val query = DownloadManager.Query()
         val cursor: Cursor? = try {
             dm().query(query)
         } catch (t: Throwable) {
@@ -100,6 +101,8 @@ class DownloadRepository(private val appContext: Context) {
                 }
             }
         }
+        // Newest first.
+        out.sortByDescending { it.lastModified }
         return out
     }
 
@@ -157,28 +160,37 @@ class DownloadRepository(private val appContext: Context) {
     // Control
     // ----------------------------------------------------------------
 
-    fun pause(id: Long): Boolean = try {
-        dm().pauseDownload(id)
-        true
-    } catch (t: Throwable) {
-        Log.w(TAG, "pause failed: " + t.message)
-        false
+    fun pause(id: Long): Boolean {
+        return try {
+            val ids = longArrayOf(id)
+            dm().pauseDownload(*ids)
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "pause failed: " + t.message)
+            false
+        }
     }
 
-    fun resume(id: Long): Boolean = try {
-        dm().resumeDownload(id)
-        true
-    } catch (t: Throwable) {
-        Log.w(TAG, "resume failed: " + t.message)
-        false
+    fun resume(id: Long): Boolean {
+        return try {
+            val ids = longArrayOf(id)
+            dm().resumeDownload(*ids)
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "resume failed: " + t.message)
+            false
+        }
     }
 
     /** Cancel a running or paused download. Removes the row from the DB. */
-    fun cancel(id: Long): Boolean = try {
-        dm().remove(id) > 0
-    } catch (t: Throwable) {
-        Log.w(TAG, "cancel failed: " + t.message)
-        false
+    fun cancel(id: Long): Boolean {
+        return try {
+            val ids = longArrayOf(id)
+            dm().remove(*ids) > 0
+        } catch (t: Throwable) {
+            Log.w(TAG, "cancel failed: " + t.message)
+            false
+        }
     }
 
     /**
@@ -233,7 +245,8 @@ class DownloadRepository(private val appContext: Context) {
         // Always scrub the DownloadManager row so the list actually
         // empties even if the file was already gone.
         try {
-            dm().remove(item.id)
+            val ids = longArrayOf(item.id)
+            dm().remove(*ids)
         } catch (_: Throwable) {
             // ignore
         }
@@ -246,11 +259,14 @@ class DownloadRepository(private val appContext: Context) {
      * Used to hide a completed download from our list while keeping
      * the actual file in the public Downloads folder.
      */
-    fun removeFromList(id: Long): Boolean = try {
-        dm().remove(id) > 0
-    } catch (t: Throwable) {
-        Log.w(TAG, "remove failed: " + t.message)
-        false
+    fun removeFromList(id: Long): Boolean {
+        return try {
+            val ids = longArrayOf(id)
+            dm().remove(*ids) > 0
+        } catch (t: Throwable) {
+            Log.w(TAG, "remove failed: " + t.message)
+            false
+        }
     }
 
     /**
@@ -276,7 +292,8 @@ class DownloadRepository(private val appContext: Context) {
             }
             val newId = dm().enqueue(request)
             try {
-                dm().remove(item.id)
+                val ids = longArrayOf(item.id)
+                dm().remove(*ids)
             } catch (_: Throwable) {
                 // ignore
             }
