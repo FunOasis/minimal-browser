@@ -150,13 +150,17 @@ class BlockingWebViewClient(
         if (url != null) ui.onUrlChanged(view, url)
         ui.onNavStateChanged(view, view.canGoBack(), view.canGoForward())
     }
-
+        
     override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)
         if (view == null) return
         // Cosmetic cleanup: hide ad containers whose scripts we already
         // blocked at the network layer. Idempotent and cheap.
         CosmeticFilter.apply(view, url)
+        // Install the scroll probe. Feeds ScrollStateBridge the true
+        // scroll offset, including inner-div scrollers that the WebView
+        // APIs cannot see. Idempotent via a window marker.
+        PageScrollProbe.install(view, url)
         ui.onPageLoadFinished(view)
         if (url != null) ui.onUrlChanged(view, url)
         ui.onNavStateChanged(view, view.canGoBack(), view.canGoForward())
