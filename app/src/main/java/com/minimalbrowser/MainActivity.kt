@@ -48,6 +48,12 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     private var lastSeenTabId: Long = -1L
 
+    // True between the user tapping Exit (or confirming the exit dialog)
+    // and the activity actually finishing. When set, we skip both the
+    // Bundle save and the disk snapshot, and clear the disk snapshot, so
+    // the next launch starts clean.
+    private var exiting: Boolean = false
+
     private var suggestionPopup: PopupWindow? = null
     private var suggestionList: ListView? = null
     private var suggestionAdapter: ArrayAdapter<String>? = null
@@ -158,8 +164,26 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         val savedActive = savedInstanceState?.getInt(KEY_ACTIVE_TAB, 0) ?: 0
         val shortcutUrl = intent?.getStringExtra(EXTRA_SHORTCUT_URL)
 
-        if (!savedUrls.isNullOrEmpty()) {
-            tabManager.restore(savedUrls, savedActive)
+        // Restore priority:
+        //   1. Bundle from system-initiated process death. Freshest.
+        //   2. Disk snapshot from a swipe-from-recents or reboot.
+        //   3. Shortcut URL alone.
+        //   4. Fresh home tab.
+        val disk = if (savedUrls.isNullOrEmpty()) SessionStore.load(this) else null
+
+        val restoreUrls: List<String>? = when {
+            !savedUrls.isNullOrEmpty() -> savedUrls
+            disk != null -> disk.urls
+            else -> null
+        }
+        val restoreActive: Int = when {
+            !savedUrls.isNullOrEmpty() -> savedActive
+            disk != null -> disk.activeIndex
+            else -> 0
+        }
+
+        if (restoreUrls != null) {
+            tabManager.restore(restoreUrls, restoreActive)
             if (!shortcutUrl.isNullOrBlank()) {
                 intent.removeExtra(EXTRA_SHORTCUT_URL)
                 tabManager.getActiveWebView()?.loadUrl(shortcutUrl)
@@ -199,16 +223,36 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
      * removes the task, so the bundle would never be consumed, but
      * skipping the write keeps the intent obvious to anyone reading
      * this later.
-     */
+     */        
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        if (isFinishing) return
+        if (exiting || isFinishing) return
         val tabs = tabManager.tabs
         if (tabs.isEmpty()) return
         val urls = ArrayList<String>(tabs.size)
         for (t in tabs) urls.add(t.url)
         outState.putStringArrayList(KEY_TAB_URLS, urls)
         outState.putInt(KEY_ACTIVE_TAB, tabManager.getActiveIndex())
+    }
+
+    /**
+     * Persist the session to disk. onStop is the last reliable lifecycle
+     * hook before the OS may reclaim the process. It runs before every
+     * backgrounding that is followed by process death, including the
+     * swipe-from-recents path that skips onSaveInstanceState entirely.
+     */
+    override fun onStop() {
+        super.onStop()
+        if (exiting || isFinishing) return
+        val tabs = tabManager.tabs
+        if (tabs.isEmpty()) return
+        val urls = ArrayList<String>(tabs.size)
+        val titles = ArrayList<String>(tabs.size)
+        for (t in tabs) {
+            urls.add(t.url)
+            titles.add(t.title)
+        }
+        SessionStore.save(this, urls, titles, tabManager.getActiveIndex())
     }
     override fun onResume() {
         super.onResume()
@@ -439,6 +483,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
 
         R.id.action_exit -> {
+            exiting = true
+            SessionStore.clear(this)
             finishAndRemoveTask()
             true
         }
@@ -479,7 +525,11 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.exit_title)
             .setMessage(R.string.exit_message)
-            .setPositiveButton(R.string.exit_confirm) { _, _ -> finishAndRemoveTask() }
+            .setPositiveButton(R.string.exit_confirm) { _, _ ->
+                exiting = true
+                SessionStore.clear(this)
+                finishAndRemoveTask()
+            }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
