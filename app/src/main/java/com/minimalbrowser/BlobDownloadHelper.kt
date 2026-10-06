@@ -21,56 +21,45 @@ import java.io.FileOutputStream
 import java.io.OutputStream
 
 /**
- * Saves blob: and data: URL "downloads" by reading their bytes in-page
- * and writing them straight to the public Downloads folder.
+ * Saves blob: and data: URL downloads by reading their bytes in-page
+ * and writing them straight to disk.
  *
  * Why this exists:
- *   The system DownloadManager cannot fetch blob: or data: URLs -- the
- *   bytes only exist inside the renderer that created them. Chrome on
- *   Android solves this by asking the page for the blob's bytes via
- *   JavaScript and then writing them to storage itself. We do the same.
+ *   The system DownloadManager cannot fetch blob: URLs. The bytes only
+ *   exist inside the renderer. GitHub's "Download raw file" button uses
+ *   fetch + Blob + URL.createObjectURL, so its download arrives here as
+ *   a blob: URL -- not as an http(s) URL. Chrome on Android solves this
+ *   the same way: ask the page for the bytes via JS, then write them
+ *   itself.
  *
- * Streaming design (no size cap):
- *   The blob is read by JS as an ArrayBuffer, then base64-encoded and
- *   sent to Java in 1 MB chunks. Each chunk is decoded and written to
- *   the open output stream before the next chunk arrives. Peak memory
- *   is bounded by a single chunk -- about 1 MB of binary plus ~1.4 MB
- *   of base64 in the renderer -- regardless of the total blob size.
+ * Storage strategy:
+ *   On API 29+, try MediaStore.Downloads first (public Downloads
+ *   folder, no permission needed). If MediaStore rejects the insert --
+ *   which happens on some ROMs for unfamiliar file extensions -- fall
+ *   back to the app-specific external Downloads directory.
  *
- *   This replaces the earlier "buffer the whole blob, then write"
- *   approach, which required a hard cap (32 MB) because both the
- *   base64 string in the renderer and the decoded ByteArray on the
- *   Java side lived simultaneously. The cap is gone. The only limit
- *   now is free disk space, same as Chrome.
+ *   On API 26-28, skip MediaStore entirely and write to the app-specific
+ *   external Downloads directory. This avoids needing WRITE_EXTERNAL_
+ *   STORAGE at runtime, which the in-process download path (in
+ *   DownloadHandler) no longer requests.
  *
- * Lifecycle of a blob download:
- *   1. start() opens the output (MediaStore entry on API 29+, plain
- *      File on API 26-28), then posts the read script to the WebView.
- *   2. JS fetches the blob, slices the ArrayBuffer into 1 MB windows,
- *      base64-encodes each window, and calls deliverChunk(b64, isLast)
- *      once per window.
- *   3. deliverChunk decodes and appends. When isLast is true it also
- *      flushes, closes, and finalises the MediaStore entry.
- *   4. On any failure (JS catch, decode error, write error) the
- *      partial entry is deleted and a toast reports the failure.
- *
- * Concurrency:
- *   Only one blob download is in flight at a time. A new start()
- *   abandons any previous in-flight download (deleting its partial
- *   file). This matches the reality that a user is not clicking two
- *   blob download links in the same second.
+ * Diagnostic toasts:
+ *   Every failure now carries a suffix identifying which stage failed:
+ *     ": openOutput"       -- could not create the destination file
+ *     ": js-eval"          -- WebView refused to run the reader script
+ *     ": write"            -- chunk write to the output stream failed
+ *     ": decode"           -- base64 decode failed
+ *     ": js <msg>"         -- page JS threw, msg carries the reason
+ *     ": data-parse"       -- data: URL could not be parsed
+ *     ": data-write"       -- data: URL parse succeeded but write failed
+ *   A plain "Download failed" with no colon means an older build.
  */
 object BlobDownloadHelper {
 
     private const val TAG = "BlobDownload"
 
-    /** Name the JS side calls into. Must match window.<NAME> in buildJs. */
     const val JS_NAME = "MBBlobBridge"
 
-    // 1 MB per bridge call. Larger chunks mean fewer round-trips across
-    // the JS/Java boundary; smaller chunks mean lower peak memory. 1 MB
-    // is the sweet spot -- a 4 GB blob goes over the bridge in 4096
-    // calls, each carrying about 1.4 MB of base64 text.
     private const val CHUNK_SIZE = 1 * 1024 * 1024
 
     private class Pending(
@@ -81,6 +70,7 @@ object BlobDownloadHelper {
     ) {
         var output: OutputStream? = null
         var mediaStoreUri: Uri? = null
+        var fileTarget: File? = null
         var bytesWritten: Long = 0L
         var failed: Boolean = false
     }
@@ -93,10 +83,6 @@ object BlobDownloadHelper {
     // Setup
     // ---------------------------------------------------------------------
 
-    /**
-     * Attach the JS bridge to a WebView. Safe to call multiple times on
-     * the same WebView -- addJavascriptInterface overwrites by name.
-     */
     fun install(webView: WebView) {
         try {
             webView.addJavascriptInterface(this, JS_NAME)
@@ -109,10 +95,6 @@ object BlobDownloadHelper {
     // blob: entry point
     // ---------------------------------------------------------------------
 
-    /**
-     * Begin a JS-mediated save of a blob URL. Returns immediately; the
-     * actual bytes arrive asynchronously via deliverChunk().
-     */
     fun start(
         activity: Activity,
         webView: WebView,
@@ -120,9 +102,9 @@ object BlobDownloadHelper {
         fileName: String,
         mimeType: String?
     ) {
+        Log.i(TAG, "start url=" + blobUrl + " name=" + fileName + " mime=" + mimeType)
         if (blobUrl.isBlank()) return
 
-        // Abandon any previous in-flight blob download.
         synchronized(lock) {
             pending?.let { abandon(it) }
             pending = null
@@ -137,8 +119,11 @@ object BlobDownloadHelper {
             mime = mimeType?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
         )
 
-        if (!openOutput(p)) {
-            toast(activity, activity.getString(R.string.download_failed))
+        val openError = openOutput(p)
+        if (openError != null) {
+            Log.w(TAG, "openOutput failed: " + openError)
+            toast(activity, activity.getString(R.string.download_failed) +
+                ": openOutput " + openError)
             return
         }
         synchronized(lock) { pending = p }
@@ -146,13 +131,14 @@ object BlobDownloadHelper {
         val js = buildJs(blobUrl)
         try {
             webView.evaluateJavascript(js, null)
+            Log.i(TAG, "js posted to webview")
         } catch (t: Throwable) {
             Log.w(TAG, "evaluateJavascript failed: " + t.message)
             synchronized(lock) {
                 abandon(p)
                 pending = null
             }
-            toast(activity, activity.getString(R.string.download_failed))
+            toast(activity, activity.getString(R.string.download_failed) + ": js-eval")
         }
     }
 
@@ -160,13 +146,6 @@ object BlobDownloadHelper {
     // Called from page JavaScript
     // ---------------------------------------------------------------------
 
-    /**
-     * Receives one base64-encoded chunk of the blob. Runs on a WebView
-     * Java bridge thread -- not the UI thread -- so all UI touches are
-     * marshalled back. The output stream is written under a lock so
-     * consecutive chunks cannot interleave even if the bridge dispatches
-     * them to different threads.
-     */
     @JavascriptInterface
     fun deliverChunk(b64: String, isLast: Boolean) {
         val p = pending ?: return
@@ -201,7 +180,8 @@ object BlobDownloadHelper {
                     synchronized(lock) {
                         if (pending === p) pending = null
                     }
-                    toastOnUi(p.activity, p.activity.getString(R.string.download_failed))
+                    toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
+                        ": write")
                     return
                 }
             } catch (t: Throwable) {
@@ -211,12 +191,14 @@ object BlobDownloadHelper {
                 synchronized(lock) {
                     if (pending === p) pending = null
                 }
-                toastOnUi(p.activity, p.activity.getString(R.string.download_failed))
+                toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
+                    ": decode")
                 return
             }
         }
 
         if (isLast) {
+            Log.i(TAG, "complete, bytes=" + p.bytesWritten)
             finalizeDownload(p, success = true)
             synchronized(lock) {
                 if (pending === p) pending = null
@@ -237,11 +219,13 @@ object BlobDownloadHelper {
             if (pending === p) pending = null
         }
         Log.w(TAG, "JS reported error: " + message)
-        toastOnUi(p.activity, p.activity.getString(R.string.download_failed))
+        val short = if (message.length > 80) message.substring(0, 80) else message
+        toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
+            ": js " + short)
     }
 
     // ---------------------------------------------------------------------
-    // data: entry point -- unchanged, inline decode
+    // data: entry point
     // ---------------------------------------------------------------------
 
     fun startDataUrl(
@@ -251,15 +235,12 @@ object BlobDownloadHelper {
         mimeType: String?
     ) {
         val parsed = parseDataUrl(dataUrl) ?: run {
-            toast(activity, activity.getString(R.string.download_failed))
+            toast(activity, activity.getString(R.string.download_failed) + ": data-parse")
             return
         }
         val name = fileName.takeIf { it.isNotBlank() } ?: parsed.defaultName
         val mime = mimeType?.takeIf { it.isNotBlank() } ?: parsed.mime
 
-        // One-shot write: no lifecycleScope, no ComponentActivity cast.
-        // The payload is already fully in memory, so we just need a
-        // background thread and a runOnUiThread for the toast.
         CoroutineScope(Dispatchers.IO).launch {
             val ok = writeAllAtOnce(
                 activity.applicationContext,
@@ -270,7 +251,7 @@ object BlobDownloadHelper {
             val msg = if (ok) {
                 activity.getString(R.string.download_saved, name)
             } else {
-                activity.getString(R.string.download_failed)
+                activity.getString(R.string.download_failed) + ": data-write"
             }
             try {
                 activity.runOnUiThread {
@@ -283,21 +264,15 @@ object BlobDownloadHelper {
     }
 
     // ---------------------------------------------------------------------
-    // JS builder -- chunked reader
+    // JS builder
     // ---------------------------------------------------------------------
 
-    /**
-     * The read script. Runs as an async IIFE. Reads the blob via fetch,
-     * slices the ArrayBuffer into 1 MB windows, base64-encodes each
-     * window (in 32 KB sub-slices, avoiding an Argument list overflow in
-     * String.fromCharCode), and delivers it across the bridge. The last
-     * window is flagged so the Java side can close the stream.
-     */
     private fun buildJs(blobUrl: String): String {
         val urlLit = JSONObject.quote(blobUrl)
         return "(async function(){" +
             "try{" +
                 "var r=await fetch(" + urlLit + ");" +
+                "if(!r.ok){window." + JS_NAME + ".deliverError('HTTP '+r.status);return;}" +
                 "var b=await r.blob();" +
                 "var ab=await b.arrayBuffer();" +
                 "var bytes=new Uint8Array(ab);" +
@@ -382,20 +357,22 @@ object BlobDownloadHelper {
     }
 
     // ---------------------------------------------------------------------
-    // Streaming output lifecycle
+    // Destination
     // ---------------------------------------------------------------------
 
     /**
-     * Open the destination. On API 29+ this is a MediaStore Downloads
-     * entry with IS_PENDING=1; on API 26-28 it is a plain File under the
-     * public Downloads directory.
+     * Open the destination. Returns null on success, or a short
+     * diagnostic string on failure.
      *
-     * Block body (not expression body) because we use early returns on
-     * the failure paths.
+     * Strategy:
+     *   1. API 29+: try MediaStore.Downloads with IS_PENDING=1.
+     *   2. If that fails (or API < 29), use app-specific external
+     *      Downloads. No permission needed, visible to file managers
+     *      under Android/data/com.minimalbrowser/files/Download/.
      */
-    private fun openOutput(p: Pending): Boolean {
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    private fun openOutput(p: Pending): String? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.DISPLAY_NAME, p.fileName)
                     put(MediaStore.Downloads.MIME_TYPE, p.mime)
@@ -406,36 +383,42 @@ object BlobDownloadHelper {
                     MediaStore.Downloads.EXTERNAL_CONTENT_URI,
                     values
                 )
-                if (uri == null) {
-                    false
+                if (uri != null) {
+                    val os = resolver.openOutputStream(uri)
+                    if (os != null) {
+                        p.mediaStoreUri = uri
+                        p.output = os
+                        Log.i(TAG, "destination: MediaStore")
+                        return null
+                    }
+                    Log.w(TAG, "MediaStore openOutputStream returned null")
+                    try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
                 } else {
-                    p.mediaStoreUri = uri
-                    p.output = resolver.openOutputStream(uri)
-                    p.output != null
+                    Log.w(TAG, "MediaStore insert returned null")
                 }
-            } else {
-                val dir = Environment.getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_DOWNLOADS
-                )
-                if (!dir.exists() && !dir.mkdirs()) {
-                    false
-                } else {
-                    val f = File(dir, p.fileName)
-                    p.output = FileOutputStream(f)
-                    true
-                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "MediaStore path threw: " +
+                    t.javaClass.simpleName + ": " + t.message)
             }
+        }
+
+        // Fallback: app-specific external Downloads.
+        return try {
+            val dir = p.appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                ?: return "no-ext-dir"
+            if (!dir.exists() && !dir.mkdirs()) return "mkdir"
+            val f = File(dir, p.fileName)
+            p.output = FileOutputStream(f)
+            p.fileTarget = f
+            Log.i(TAG, "destination: app dir " + f.absolutePath)
+            null
         } catch (t: Throwable) {
-            Log.w(TAG, "openOutput failed: " + t.message)
-            false
+            Log.w(TAG, "app dir path threw: " +
+                t.javaClass.simpleName + ": " + t.message)
+            t.javaClass.simpleName
         }
     }
 
-    /**
-     * Flush and close the stream, then either commit the MediaStore row
-     * (success) or delete the partial entry (failure). On API < Q, an
-     * unsuccessful write deletes the file we created.
-     */
     private fun finalizeDownload(p: Pending, success: Boolean) {
         synchronized(p) {
             try { p.output?.flush() } catch (_: Throwable) {}
@@ -456,37 +439,21 @@ object BlobDownloadHelper {
                     Log.w(TAG, "finalize update failed: " + t.message)
                 }
             } else {
-                try {
-                    resolver.delete(uri, null, null)
-                } catch (_: Throwable) {}
+                try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
             }
         } else if (!success) {
-            try {
-                val dir = Environment.getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_DOWNLOADS
-                )
-                File(dir, p.fileName).delete()
-            } catch (_: Throwable) {}
+            try { p.fileTarget?.delete() } catch (_: Throwable) {}
         }
     }
 
-    /**
-     * Discard an in-flight download without touching the screen. Used
-     * when a new start() supersedes an old one.
-     */
     private fun abandon(p: Pending) {
         finalizeDownload(p, success = false)
     }
 
     // ---------------------------------------------------------------------
-    // data: URL disk write (single shot)
+    // data: URL disk write
     // ---------------------------------------------------------------------
 
-    /**
-     * Block body (not expression body) because the two branches below
-     * ultimately call functions with early-return paths, and Kotlin is
-     * stricter when the containing function is `= try { ... }`.
-     */
     private fun writeAllAtOnce(
         context: Context,
         fileName: String,
@@ -497,7 +464,7 @@ object BlobDownloadHelper {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 writeViaMediaStore(context, fileName, mime, bytes)
             } else {
-                writeViaFile(fileName, bytes)
+                writeViaFile(context, fileName, bytes)
             }
         } catch (t: Throwable) {
             Log.w(TAG, "write failed: " + t.message)
@@ -511,45 +478,50 @@ object BlobDownloadHelper {
         mime: String,
         bytes: ByteArray
     ): Boolean {
-        val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-            put(MediaStore.Downloads.MIME_TYPE, mime)
-            put(MediaStore.Downloads.IS_PENDING, 1)
-        }
-        val resolver = context.contentResolver
-        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-        if (uri == null) return false
-
         try {
-            val out = resolver.openOutputStream(uri)
-            if (out == null) {
-                try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
-                return false
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, mime)
+                put(MediaStore.Downloads.IS_PENDING, 1)
             }
-            out.use {
-                it.write(bytes)
-                it.flush()
+            val resolver = context.contentResolver
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            if (uri != null) {
+                val out = resolver.openOutputStream(uri)
+                if (out != null) {
+                    out.use {
+                        it.write(bytes)
+                        it.flush()
+                    }
+                    values.clear()
+                    values.put(MediaStore.Downloads.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                    return true
+                }
+                try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
             }
         } catch (t: Throwable) {
-            Log.w(TAG, "stream write failed: " + t.message)
-            try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
-            return false
+            Log.w(TAG, "MediaStore write failed: " + t.message)
         }
-
-        values.clear()
-        values.put(MediaStore.Downloads.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-        return true
+        return writeViaFile(context, fileName, bytes)
     }
 
-    private fun writeViaFile(fileName: String, bytes: ByteArray): Boolean {
-        val dir = Environment.getExternalStoragePublicDirectory(
-            Environment.DIRECTORY_DOWNLOADS
-        )
-        if (!dir.exists() && !dir.mkdirs()) return false
-        val target = File(dir, fileName)
-        FileOutputStream(target).use { it.write(bytes) }
-        return true
+    private fun writeViaFile(
+        context: Context,
+        fileName: String,
+        bytes: ByteArray
+    ): Boolean {
+        return try {
+            val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                ?: return false
+            if (!dir.exists() && !dir.mkdirs()) return false
+            val target = File(dir, fileName)
+            FileOutputStream(target).use { it.write(bytes) }
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "file write failed: " + t.message)
+            false
+        }
     }
 
     // ---------------------------------------------------------------------
