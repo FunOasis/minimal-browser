@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Environment
 import android.util.Log
 import java.io.File
+import java.lang.reflect.Method
 
 /**
  * Read/write facade over Android's system DownloadManager.
@@ -22,6 +23,15 @@ import java.io.File
  * in-process foreground service to babysit. Chrome on Android uses it
  * too.
  *
+ * Pause/Resume via reflection:
+ *   DownloadManager.pauseDownload(long...) and resumeDownload(long...)
+ *   are annotated @SystemApi -- they are present on every device at
+ *   runtime but are stripped from the public compile SDK, so a direct
+ *   call does not compile. We resolve them once via reflection and
+ *   cache the Method handles. If either is missing at runtime (a
+ *   hypothetical OEM build that removed them), supportsPauseResume
+ *   returns false and the UI hides those actions.
+ *
  * Query cost: listAll() is a single cursor walk over the app's own
  * download rows. At tens of rows this is sub-millisecond on the
  * platform side, cheap enough to poll once per second while the
@@ -31,6 +41,30 @@ class DownloadRepository(private val appContext: Context) {
 
     companion object {
         private const val TAG = "DownloadRepository"
+
+        @Volatile private var pauseMethod: Method? = null
+        @Volatile private var resumeMethod: Method? = null
+        @Volatile private var reflectionResolved = false
+
+        @Synchronized
+        private fun resolveReflection() {
+            if (reflectionResolved) return
+            reflectionResolved = true
+            try {
+                pauseMethod = DownloadManager::class.java
+                    .getMethod("pauseDownload", LongArray::class.java)
+            } catch (t: Throwable) {
+                Log.i(TAG, "pauseDownload not reachable: " + t.message)
+                pauseMethod = null
+            }
+            try {
+                resumeMethod = DownloadManager::class.java
+                    .getMethod("resumeDownload", LongArray::class.java)
+            } catch (t: Throwable) {
+                Log.i(TAG, "resumeDownload not reachable: " + t.message)
+                resumeMethod = null
+            }
+        }
     }
 
     data class Item(
@@ -70,8 +104,23 @@ class DownloadRepository(private val appContext: Context) {
             }
     }
 
+    init {
+        resolveReflection()
+    }
+
     private fun dm(): DownloadManager =
         appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+
+    /**
+     * True if this device's DownloadManager exposes pause/resume to
+     * reflection. False on hypothetical OEM builds that stripped them.
+     * The UI uses this to decide whether to offer those actions.
+     */
+    val supportsPauseResume: Boolean
+        get() {
+            resolveReflection()
+            return pauseMethod != null && resumeMethod != null
+        }
 
     // ----------------------------------------------------------------
     // Read
@@ -161,9 +210,11 @@ class DownloadRepository(private val appContext: Context) {
     // ----------------------------------------------------------------
 
     fun pause(id: Long): Boolean {
+        resolveReflection()
+        val m = pauseMethod ?: return false
         return try {
             val ids = longArrayOf(id)
-            dm().pauseDownload(*ids)
+            m.invoke(dm(), ids)
             true
         } catch (t: Throwable) {
             Log.w(TAG, "pause failed: " + t.message)
@@ -172,9 +223,11 @@ class DownloadRepository(private val appContext: Context) {
     }
 
     fun resume(id: Long): Boolean {
+        resolveReflection()
+        val m = resumeMethod ?: return false
         return try {
             val ids = longArrayOf(id)
-            dm().resumeDownload(*ids)
+            m.invoke(dm(), ids)
             true
         } catch (t: Throwable) {
             Log.w(TAG, "resume failed: " + t.message)
