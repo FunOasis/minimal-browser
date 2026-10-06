@@ -24,18 +24,24 @@ class TabManager(
     companion object {
         const val MAX_TABS = 6
     }
-    
-    class Tab(val id: Long) {    
-        var url: String = Prefs.HOME_URL    
-        var title: String = ""    
-        var favicon: Bitmap? = null    
-        var webView: WebView? = null    
+
+    class Tab(val id: Long) {
+        var url: String = Prefs.HOME_URL
+        var title: String = ""
+        var favicon: Bitmap? = null
+        var webView: WebView? = null
         var lastUsedAt: Long = System.currentTimeMillis()
-    // Last scroll offset reported by the WebView's OnScrollChangeListener.
-    // Used by SwipeRefreshLayout's childScrollUp callback instead of the
-    // unreliable WebView.canScrollVertically(-1). Volatile because the
-    // listener can fire from a different thread during a fling.    
+
+        // Last scroll offset reported by the WebView's OnScrollChangeListener.
+        // Used by SwipeRefreshLayout's childScrollUp callback instead of the
+        // unreliable WebView.canScrollVertically(-1). Volatile because the
+        // listener can fire from a different thread during a fling.
         @Volatile var lastScrollY: Int = 0
+
+        // True scroll offset reported by PageScrollProbe's JS listener.
+        // Covers sites that scroll an inner div rather than the document,
+        // where lastScrollY and canScrollVertically always report 0.
+        val scrollBridge = ScrollStateBridge()
     }
 
     private val _tabs = mutableListOf<Tab>()
@@ -102,20 +108,30 @@ class TabManager(
         syncActiveUi()
     }
 
-    fun reloadActive() {    
+    fun reloadActive() {
         getActiveWebView()?.reload()
     }
-/**
- * True if the active WebView is currently scrolled away from the top.
- * SwipeRefreshLayout calls this before it starts consuming a downward
- * drag. We prefer the tracked scroll offset because it is stable
- * during flings; canScrollVertically is consulted as a fallback for
- * the brief window before the listener has fired on a fresh page.
- */
-    fun canActiveScrollUp(): Boolean {    
-        val tab = getActive() ?: return false    
-        if (tab.lastScrollY > 0) return true    
-        val wv = tab.webView ?: return false    
+
+    /**
+     * True if the active tab is currently scrolled away from the top.
+     * SwipeRefreshLayout calls this before it starts consuming a
+     * downward drag. Three sources, in order of reliability:
+     *
+     *   1. scrollBridge.topScroll -- the actual inner-div offset,
+     *      reported by page JS. This is the only one that works on
+     *      sites that use a nested scroller (manga readers, SPA
+     *      shells).
+     *   2. tab.lastScrollY -- the WebView's own scroll offset, tracked
+     *      through OnScrollChangeListener. Reliable during flings.
+     *   3. wv.canScrollVertically(-1) -- the framework call, kept as a
+     *      fallback for the brief window before either of the above
+     *      has a value.
+     */
+    fun canActiveScrollUp(): Boolean {
+        val tab = getActive() ?: return false
+        if (tab.scrollBridge.topScroll > 0) return true
+        if (tab.lastScrollY > 0) return true
+        val wv = tab.webView ?: return false
         return wv.canScrollVertically(-1)
     }
 
@@ -203,12 +219,20 @@ class TabManager(
             FrameLayout.LayoutParams.MATCH_PARENT
         )
         wv.setBackgroundColor(activity.getColor(R.color.window_bg))
-// Track scroll position ourselves. WebView.canScrollVertically(-1)
-// is unreliable mid-fling and mid-layout on Chromium WebView; the
-// OnScrollChangeListener reports the actual scroll offset instead.
-        wv.setOnScrollChangeListener { _, _, scrollY, _, _ ->    
+
+        // Track scroll position ourselves. WebView.canScrollVertically(-1)
+        // is unreliable mid-fling and mid-layout on Chromium WebView; the
+        // OnScrollChangeListener reports the actual scroll offset instead.
+        // This covers normal body-scroll sites. Inner-div scrollers are
+        // covered by the PageScrollProbe JS bridge below.
+        wv.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             tab.lastScrollY = scrollY
         }
+
+        // Attach the JS bridge that lets the page report its own scroll
+        // offset. Must be called before any loadUrl, and the name here
+        // must match PageScrollProbe.JS_INTERFACE_NAME.
+        wv.addJavascriptInterface(tab.scrollBridge, PageScrollProbe.JS_INTERFACE_NAME)
 
         WebViewConfigurator.apply(wv, prefs.javaScriptEnabled)
 
@@ -242,12 +266,15 @@ class TabManager(
 
     private inner class TabWebChromeClient(private val tab: Tab) : WebChromeClient() {
 
-        override fun onProgressChanged(view: WebView?, newProgress: Int) {    
+        override fun onProgressChanged(view: WebView?, newProgress: Int) {
             view?.url?.let { live -> if (live.isNotBlank()) tab.url = live }
-    // A fresh navigation starts at scroll 0. Reset here so a stale
-    // value from the previous page cannot suppress pull-to-refresh
-    // on the new one.    
-            if (newProgress == 0) tab.lastScrollY = 0    
+            // A fresh navigation starts at scroll 0. Reset both trackers
+            // here so a stale value from the previous page cannot
+            // suppress pull-to-refresh on the new one.
+            if (newProgress == 0) {
+                tab.lastScrollY = 0
+                tab.scrollBridge.reset()
+            }
             if (tab === getActive()) onProgress(newProgress)
         }
 
