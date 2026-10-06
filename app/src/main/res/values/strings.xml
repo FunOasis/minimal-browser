@@ -29,6 +29,7 @@
     <string name="cd_close">Close</string>
     <string name="cd_close_tab">Close tab</string>
     <string name="cd_remove_warehouse_list">Remove list</string>
+    <string name="cd_more">More actions</string>
 
     <string name="tabs_title">Tabs</string>
     <string name="tabs_new">+ New tab</string>
@@ -63,4 +64,32 @@
     <string name="shortcut_requested">Shortcut added to home screen</string>
     <string name="shortcut_unsupported">Your launcher doesn\'t support adding shortcuts</string>
     <string name="shortcut_needs_page">Open a page first</string>
+
+    <string name="downloads_title">Downloads</string>
+    <string name="downloads_clear_completed">Clear completed</string>
+    <string name="downloads_empty_title">No downloads yet</string>
+    <string name="downloads_empty_subtitle">Files you download will show up here</string>
+    <string name="downloads_action_pause">Pause</string>
+    <string name="downloads_action_resume">Resume</string>
+    <string name="downloads_action_cancel">Cancel</string>
+    <string name="downloads_action_retry">Retry</string>
+    <string name="downloads_action_open">Open</string>
+    <string name="downloads_action_share">Share</string>
+    <string name="downloads_action_delete">Delete file</string>
+    <string name="downloads_action_system">Show in Downloads app</string>
+    <string name="downloads_status_completed">Completed</string>
+    <string name="downloads_status_completed_with_size">Completed - %1$s - %2$s</string>
+    <string name="downloads_status_running">Downloading</string>
+    <string name="downloads_status_running_with_progress">Downloading - %1$s%% - %2$s</string>
+    <string name="downloads_status_paused">Paused</string>
+    <string name="downloads_status_failed">Failed (%1$s)</string>
+    <string name="downloads_status_queued">Queued</string>
+    <string name="downloads_delete_confirm_title">Delete file?</string>
+    <string name="downloads_delete_confirm_message">This removes %1$s from your Downloads folder.</string>
+    <string name="downloads_delete_confirm_yes">Delete</string>
+    <string name="downloads_delete_failed">Could not delete the file</string>
+    <string name="downloads_retry_failed">Could not retry download</string>
+    <string name="downloads_nothing_to_clear">Nothing to clear</string>
+    <string name="downloads_file_missing">File is no longer available</string>
+    <string name="downloads_no_app">No app can open this file</string>
 </resources>
