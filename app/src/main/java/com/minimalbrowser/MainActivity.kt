@@ -781,14 +781,15 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         recreate()
     }
 
-    override fun onDownloadRequested(view: WebView, url: String) {
-        DownloadHandler.handle(
-            activity = this,
-            url = url,
-            userAgent = view.settings.userAgentString,
-            contentDisposition = null,
-            mimeType = null,
-            contentLength = -1L
+    override fun onDownloadRequested(view: WebView, url: String) {    
+        DownloadHandler.handle(        
+            activity = this,        
+            webView = view,        
+            url = url,        
+            userAgent = view.settings.userAgentString,        
+            contentDisposition = null,        
+            mimeType = null,        
+            contentLength = -1L    
         )
     }
 
