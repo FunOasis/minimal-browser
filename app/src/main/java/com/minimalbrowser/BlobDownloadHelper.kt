@@ -541,17 +541,19 @@ object BlobDownloadHelper {
         return writeViaFile(context, fileName, bytes)
     }
 
-    private fun writeViaFile(
+    private fun writeViaFile(    
         context: Context, fileName: String, bytes: ByteArray
-    ): Boolean = try {
-        val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-            ?: return false
-        if (!dir.exists() && !dir.mkdirs()) return false
-        FileOutputStream(File(dir, fileName)).use { it.write(bytes) }
-        true
-    } catch (t: Throwable) {
-        Log.w(TAG, "file write failed: " + t.message)
-        false
+    ): Boolean {    
+        return try {        
+            val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)            
+                ?: return false
+            if (!dir.exists() && !dir.mkdirs()) return false        
+            FileOutputStream(File(dir, fileName)).use { it.write(bytes) }        
+            true    
+        } catch (t: Throwable) {        
+            Log.w(TAG, "file write failed: " + t.message)        
+            false    
+        }
     }
 
     // ---------------------------------------------------------------------
