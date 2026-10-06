@@ -12,6 +12,7 @@ import android.webkit.CookieManager
 import android.webkit.MimeTypeMap
 import android.webkit.WebView
 import android.widget.Toast
+import java.io.File
 import java.net.URLDecoder
 
 /**
@@ -177,15 +178,25 @@ object DownloadHandler {
 
     /**
      * Filename for a blob: URL. The blob URL itself looks like
-     * "blob:https://example.com/7e9a..." -- no useful tail. So we
-     * synthesize a name from the MIME type and let the JS side
-     * override via the blob's own type if it differs.
+     * "blob:https://example.com/7e9a..." -- no useful tail in the
+     * common case. We try the MIME type first (the most reliable
+     * source), fall back to a filename extension embedded anywhere in
+     * the URL string (some pages build blob URLs with a trailing
+     * ".ext" for convenience), and only then default to ".bin".
      */
     private fun blobFallbackName(url: String, mimeType: String?): String {
-        val ext = mimeType
+        val fromMime = mimeType
             ?.let { MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
             ?.takeIf { it.isNotBlank() }
-            ?: "bin"
+
+        val fromUrl = url.substringAfterLast('.', "")
+            .takeIf { ext ->
+                ext.isNotEmpty() &&
+                ext.length <= 8 &&
+                ext.all { it.isLetterOrDigit() }
+            }
+
+        val ext = fromMime ?: fromUrl ?: "bin"
         return "download_" + System.currentTimeMillis() + "." + ext
     }
 
@@ -219,10 +230,46 @@ object DownloadHandler {
                 setNotificationVisibility(
                     DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
                 )
-                setDestinationInExternalPublicDir(
-                    Environment.DIRECTORY_DOWNLOADS,
-                    filename
-                )
+
+                // Prefer the public Downloads directory so the file is
+                // reachable from a file manager and the system Downloads
+                // app. On a handful of OEM ROMs and some scoped-storage
+                // configurations, this call can throw because the app
+                // cannot mkdir the target directory. Rather than let the
+                // whole download fail, fall back to the app-specific
+                // external Downloads folder, which is still visible to
+                // the user under Android/data/<pkg>/files/Download/.
+                var destinationSet = false
+                try {
+                    setDestinationInExternalPublicDir(
+                        Environment.DIRECTORY_DOWNLOADS,
+                        filename
+                    )
+                    destinationSet = true
+                } catch (t: Throwable) {
+                    Log.w(TAG, "public Downloads destination rejected: " +
+                        t.javaClass.simpleName + ": " + t.message)
+                }
+                if (!destinationSet) {
+                    try {
+                        val dir = context.getExternalFilesDir(
+                            Environment.DIRECTORY_DOWNLOADS
+                        )
+                        if (dir != null) {
+                            if (!dir.exists()) dir.mkdirs()
+                            val target = File(dir, filename)
+                            setDestinationUri(Uri.fromFile(target))
+                            Log.i(TAG, "using app-specific destination: " + target)
+                        } else {
+                            throw IllegalStateException("no external files dir")
+                        }
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "fallback destination failed too: " +
+                            t.javaClass.simpleName + ": " + t.message)
+                        throw t
+                    }
+                }
+
                 setAllowedOverMetered(true)
                 setAllowedOverRoaming(true)
             }
@@ -239,7 +286,11 @@ object DownloadHandler {
 
             toast(context, context.getString(R.string.download_started, filename))
         } catch (t: Throwable) {
-            Log.w(TAG, "enqueue failed: " + t.message)
+            // Log the concrete exception type too. "Download failed"
+            // alone is useless for diagnosing a user report; the class
+            // name and message pinpoint the exact call that blew up.
+            Log.w(TAG, "enqueue failed for " + url + ": " +
+                t.javaClass.simpleName + ": " + t.message)
             toast(context, context.getString(R.string.download_failed))
         }
     }
