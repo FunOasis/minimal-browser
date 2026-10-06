@@ -32,6 +32,13 @@ class TabManager(
         var webView: WebView? = null
         var lastUsedAt: Long = System.currentTimeMillis()
 
+        // True once a load has been issued for this tab. Used by switchTo
+        // to lazily load a tab that was created in the background (either
+        // as a restored tab from saved state, or as a non-active tab from
+        // restore()). Prevents a failed load from being retried on every
+        // tab switch.
+        var hasLoadedOnce: Boolean = false
+
         // Last scroll offset reported by the WebView's OnScrollChangeListener.
         // Used by SwipeRefreshLayout's childScrollUp callback instead of the
         // unreliable WebView.canScrollVertically(-1). Volatile because the
@@ -72,6 +79,7 @@ class TabManager(
             ui.onNavStateChanged(wv, false, false)
             onFavicon(tab.favicon)
             wv.loadUrl(url)
+            tab.hasLoadedOnce = true
         } else {
             wv.visibility = View.GONE
             wv.onPause()
@@ -79,6 +87,27 @@ class TabManager(
 
         onTabsChanged()
         return tab
+    }
+
+    /**
+     * Rebuild the tab set from saved state. Called from MainActivity's
+     * onCreate when a previous process was killed and left a bundle of
+     * URLs behind. Only the saved active tab is loaded immediately; the
+     * others stay dormant until the user taps them.
+     *
+     * If the saved list is empty (should not happen -- MainActivity
+     * always has at least one tab), we fall back to a single home tab
+     * so the activity is never left without a WebView.
+     */
+    fun restore(urls: List<String>, activeIndex: Int) {
+        if (urls.isEmpty()) {
+            create()
+            return
+        }
+        for (u in urls) {
+            create(url = u, makeActive = false)
+        }
+        switchTo(activeIndex.coerceIn(0, _tabs.size - 1))
     }
 
     fun closeTab(index: Int) {
@@ -103,6 +132,18 @@ class TabManager(
         if (index !in _tabs.indices) return
         activeIndex = index
         _tabs[index].lastUsedAt = System.currentTimeMillis()
+
+        // A tab created with makeActive=false (restored from saved state,
+        // or pre-created as a background tab) has never loaded a URL.
+        // Load on first activation so it becomes usable. Once loaded,
+        // subsequent switches are pure visibility toggles with no reload.
+        val tab = _tabs[index]
+        val wv = tab.webView
+        if (wv != null && !tab.hasLoadedOnce && tab.url.isNotBlank()) {
+            wv.loadUrl(tab.url)
+            tab.hasLoadedOnce = true
+        }
+
         syncVisibility()
         onTabsChanged()
         syncActiveUi()
@@ -182,7 +223,16 @@ class TabManager(
         tab.webView = null
     }
 
+    /**
+     * Release a WebView's resources. Blank the page first so the
+     * renderer drops its document and native bitmap caches before
+     * WebView.destroy() tears down the process bridge. Without the
+     * blank, destroy() can leave native memory pinned until the OS
+     * reclaims it, which matters when the LRU is evicting a tab under
+     * memory pressure.
+     */
     private fun destroyWebView(wv: WebView) {
+        runCatching { wv.loadUrl("about:blank") }
         (wv.parent as? ViewGroup)?.removeView(wv)
         wv.stopLoading()
         wv.removeAllViews()
@@ -303,8 +353,13 @@ class TabManager(
                         request: WebResourceRequest?
                     ): Boolean {
                         val url = request?.url?.toString().orEmpty()
-                        if (url.isNotBlank()) create(url = url, makeActive = true)
+                        // Always dispose the trap WebView, regardless of
+                        // whether a usable URL arrived. A page can open a
+                        // window and then cancel or navigate to nothing;
+                        // without this the trap would leak native resources
+                        // until process death.
                         v?.post { runCatching { v.destroy() } }
+                        if (url.isNotBlank()) create(url = url, makeActive = true)
                         return true
                     }
                 }
