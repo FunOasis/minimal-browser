@@ -2,6 +2,7 @@ package com.minimalbrowser
 
 import android.graphics.Bitmap
 import android.os.Message
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
@@ -22,7 +23,17 @@ class TabManager(
 ) {
 
     companion object {
+        private const val TAG = "TabManager"
+
         const val MAX_TABS = 6
+
+        /**
+         * Freeze thresholds. A tab is a candidate for freezing when it is
+         * not the active tab and has not been the active tab for this long.
+         * Frozen means: WebView destroyed, Tab object retained, URL kept.
+         */
+        const val FREEZE_AFTER_FG_MS = 10 * 60 * 1000L   // 10 min foreground
+        const val FREEZE_AFTER_BG_MS = 2 * 60 * 1000L    // 2 min background
     }
 
     class Tab(val id: Long) {
@@ -32,22 +43,21 @@ class TabManager(
         var webView: WebView? = null
         var lastUsedAt: Long = System.currentTimeMillis()
 
-        // True once a load has been issued for this tab. Used by switchTo
-        // to lazily load a tab that was created in the background (either
-        // as a restored tab from saved state, or as a non-active tab from
-        // restore()). Prevents a failed load from being retried on every
-        // tab switch.
+        // True once a load has been issued for this tab. Prevents a failed
+        // load from being retried on every tab switch.
         var hasLoadedOnce: Boolean = false
 
+        // True when the WebView has been released to save CPU and battery.
+        // The tab still exists, still shows in the tab sheet, still has a
+        // URL. switchTo() rebuilds the WebView lazily.
+        var frozen: Boolean = false
+
         // Last scroll offset reported by the WebView's OnScrollChangeListener.
-        // Used by SwipeRefreshLayout's childScrollUp callback instead of the
-        // unreliable WebView.canScrollVertically(-1). Volatile because the
-        // listener can fire from a different thread during a fling.
+        // Volatile because the listener can fire from a different thread.
         @Volatile var lastScrollY: Int = 0
 
         // True scroll offset reported by PageScrollProbe's JS listener.
-        // Covers sites that scroll an inner div rather than the document,
-        // where lastScrollY and canScrollVertically always report 0.
+        // Covers sites that scroll an inner div rather than the document.
         val scrollBridge = ScrollStateBridge()
     }
 
@@ -91,32 +101,15 @@ class TabManager(
 
     /**
      * Rebuild the tab set from saved state. Called from MainActivity's
-     * onCreate when Android is recreating the activity with a bundle
-     * (config change we do not handle, or process death after being
-     * backgrounded). Only the saved active tab is loaded immediately;
-     * the others stay dormant until tapped.
-     *
-     * Contract for what survives:
-     *   preserved  -- the list of URLs, and which one was active
-     *   preserved  -- cookies, localStorage, HTTP cache (WebView-owned
-     *                 on-disk data, independent of this bundle)
-     *   lost       -- in-memory JS state, form field contents, scroll
-     *                 position, back/forward history, scroll offsets
-     *
-     * Same guarantees Chrome and Firefox give after process death.
+     * onCreate when Android is recreating the activity with a bundle or
+     * a disk snapshot. Only the saved active tab loads immediately; the
+     * others stay dormant until tapped.
      *
      * Input is treated as hostile: a saved bundle can carry junk if a
-     * page briefly had an exotic URL in the main frame. We accept only
-     * http, https, and minimal:// (home). Anything else is dropped.
-     * The count is capped at MAX_TABS. If every URL is dropped, or the
-     * list was empty to begin with, we fall back to a single home tab
-     * so the activity is never left without a WebView.
+     * page briefly had an exotic URL in the main frame. Only http, https,
+     * and minimal:// (home) survive. Count capped at MAX_TABS.
      */
     fun restore(urls: List<String>, activeIndex: Int) {
-        // Defensive: if somehow we already have tabs (should not happen
-        // in the current lifecycle, but a future refactor could call
-        // restore from a different path), tear them down first so we
-        // do not stack two sets of WebViews.
         if (_tabs.isNotEmpty()) {
             destroyAll()
         }
@@ -141,15 +134,6 @@ class TabManager(
         switchTo(activeIndex.coerceIn(0, _tabs.size - 1))
     }
 
-    /**
-     * Which URLs are safe to feed back into loadUrl on next launch.
-     * http and https are obvious. minimal://home is our own internal
-     * page and should restore. Everything else -- about:, data:, blob:,
-     * javascript:, content://, file:// -- is excluded. A user who was
-     * on one of those when the process died does not meaningfully miss
-     * it, and restoring a script: URL into a fresh WebView is exactly
-     * the class of thing we do not want on our hands.
-     */
     private fun isRestorable(url: String): Boolean {
         val lower = url.lowercase()
         return lower.startsWith("http://") ||
@@ -178,13 +162,15 @@ class TabManager(
     fun switchTo(index: Int) {
         if (index !in _tabs.indices) return
         activeIndex = index
-        _tabs[index].lastUsedAt = System.currentTimeMillis()
-
-        // A tab created with makeActive=false (restored from saved state,
-        // or pre-created as a background tab) has never loaded a URL.
-        // Load on first activation so it becomes usable. Once loaded,
-        // subsequent switches are pure visibility toggles with no reload.
         val tab = _tabs[index]
+        tab.lastUsedAt = System.currentTimeMillis()
+
+        // If the tab was frozen to save battery, rebuild it now. This is
+        // the only place frozen tabs come back to life during normal use.
+        if (tab.frozen) {
+            unfreezeTab(index)
+        }
+
         val wv = tab.webView
         if (wv != null && !tab.hasLoadedOnce && tab.url.isNotBlank()) {
             wv.loadUrl(tab.url)
@@ -201,19 +187,55 @@ class TabManager(
     }
 
     /**
-     * True if the active tab is currently scrolled away from the top.
-     * SwipeRefreshLayout calls this before it starts consuming a
-     * downward drag. Three sources, in order of reliability:
+     * Release the WebView of every tab that has been idle past the
+     * threshold. Called periodically from MainActivity's scheduler.
      *
-     *   1. scrollBridge.topScroll -- the actual inner-div offset,
-     *      reported by page JS. This is the only one that works on
-     *      sites that use a nested scroller (manga readers, SPA
-     *      shells).
-     *   2. tab.lastScrollY -- the WebView's own scroll offset, tracked
-     *      through OnScrollChangeListener. Reliable during flings.
-     *   3. wv.canScrollVertically(-1) -- the framework call, kept as a
-     *      fallback for the brief window before either of the above
-     *      has a value.
+     * Foreground threshold is generous (10 min) so a user who is actively
+     * switching between tabs never trips it. A tab opened an hour ago and
+     * forgotten does.
+     *
+     * Background threshold is aggressive (2 min). When the app is not
+     * visible, every CPU cycle a background tab burns is pure waste.
+     * Freezing the active tab in background too, at the background
+     * threshold, is deliberate: the user is not looking at anything, so
+     * there is no reason to keep a live renderer.
+     *
+     * Returns the number of tabs frozen this round, for logging.
+     */
+    fun freezeIdleTabs(isBackgrounded: Boolean): Int {
+        val now = System.currentTimeMillis()
+        val threshold = if (isBackgrounded) FREEZE_AFTER_BG_MS else FREEZE_AFTER_FG_MS
+        var count = 0
+        for ((i, tab) in _tabs.withIndex()) {
+            if (tab.frozen) continue
+            if (tab.webView == null) continue
+            // In foreground, never freeze the active tab. In background,
+            // freeze it too.
+            if (i == activeIndex && !isBackgrounded) continue
+            val idle = now - tab.lastUsedAt
+            if (idle < threshold) continue
+            freezeTab(i)
+            count++
+        }
+        return count
+    }
+
+    /**
+     * Rebuild the active tab if it was frozen while backgrounded. Called
+     * from MainActivity.onResume so the user sees the page they left,
+     * not a blank view.
+     */
+    fun unfreezeActiveIfFrozen() {
+        val idx = activeIndex
+        if (idx !in _tabs.indices) return
+        if (_tabs[idx].frozen) unfreezeTab(idx)
+    }
+
+    /**
+     * True if the active tab is currently scrolled away from the top.
+     * Three sources, in order of reliability: inner-div offset from the
+     * page JS bridge, then the WebView's own offset, then the framework
+     * call as a last resort.
      */
     fun canActiveScrollUp(): Boolean {
         val tab = getActive() ?: return false
@@ -242,6 +264,7 @@ class TabManager(
         for (tab in _tabs) {
             tab.webView?.let { destroyWebView(it) }
             tab.webView = null
+            tab.frozen = false
         }
         _tabs.clear()
     }
@@ -271,12 +294,9 @@ class TabManager(
     }
 
     /**
-     * Release a WebView's resources. Blank the page first so the
-     * renderer drops its document and native bitmap caches before
-     * WebView.destroy() tears down the process bridge. Without the
-     * blank, destroy() can leave native memory pinned until the OS
-     * reclaims it, which matters when the LRU is evicting a tab under
-     * memory pressure.
+     * Release a WebView's resources. Blank the page first so the renderer
+     * drops its document and native bitmap caches before destroy() tears
+     * down the process bridge.
      */
     private fun destroyWebView(wv: WebView) {
         runCatching { wv.loadUrl("about:blank") }
@@ -284,6 +304,53 @@ class TabManager(
         wv.stopLoading()
         wv.removeAllViews()
         wv.destroy()
+    }
+
+    /**
+     * Freeze a tab: destroy the WebView but keep the Tab object intact.
+     * The tab stays visible in the tab sheet with its cached title and
+     * favicon. The URL is what it will reload from on the next switch.
+     */
+    private fun freezeTab(index: Int) {
+        val tab = _tabs.getOrNull(index) ?: return
+        if (tab.frozen) return
+        val wv = tab.webView ?: return
+
+        // Capture the live URL before dropping the view. The WebView may
+        // have navigated since we last saw it.
+        wv.url?.let { live -> if (live.isNotBlank()) tab.url = live }
+
+        // Release the bridge and the renderer.
+        destroyWebView(wv)
+
+        tab.webView = null
+        tab.frozen = true
+        tab.hasLoadedOnce = false
+        tab.lastScrollY = 0
+        tab.scrollBridge.reset()
+
+        Log.i(TAG, "Froze tab " + index + " (" + tab.url + ")")
+    }
+
+    /**
+     * Unfreeze a tab: rebuild its WebView and reload the saved URL. Called
+     * from switchTo or from unfreezeActiveIfFrozen after returning from
+     * the background.
+     */
+    private fun unfreezeTab(index: Int) {
+        val tab = _tabs.getOrNull(index) ?: return
+        if (!tab.frozen) return
+        val url = tab.url.ifBlank { Prefs.HOME_URL }
+
+        val wv = buildWebView(tab)
+        tab.webView = wv
+        container.addView(wv)
+
+        tab.frozen = false
+        wv.loadUrl(url)
+        tab.hasLoadedOnce = true
+
+        Log.i(TAG, "Unfroze tab " + index + " -> " + url)
     }
 
     private fun syncVisibility() {
@@ -317,25 +384,14 @@ class TabManager(
         )
         wv.setBackgroundColor(activity.getColor(R.color.window_bg))
 
-        // Track scroll position ourselves. WebView.canScrollVertically(-1)
-        // is unreliable mid-fling and mid-layout on Chromium WebView; the
-        // OnScrollChangeListener reports the actual scroll offset instead.
-        // This covers normal body-scroll sites. Inner-div scrollers are
-        // covered by the PageScrollProbe JS bridge below.
         wv.setOnScrollChangeListener { _, _, scrollY, _, _ ->
             tab.lastScrollY = scrollY
         }
 
-        // Attach the JS bridge that lets the page report its own scroll
-        // offset. Must be called before any loadUrl, and the name here
-        // must match PageScrollProbe.JS_INTERFACE_NAME.
         wv.addJavascriptInterface(tab.scrollBridge, PageScrollProbe.JS_INTERFACE_NAME)
 
         WebViewConfigurator.apply(wv, prefs.javaScriptEnabled)
 
-        // Let the OS reclaim this renderer when the WebView isn't visible.
-        // Second arg (waivedWhenNotVisible) permits the renderer to be killed
-        // under memory pressure; it transparently reloads on switch back.
         runCatching {
             wv.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, true)
         }
@@ -365,9 +421,6 @@ class TabManager(
 
         override fun onProgressChanged(view: WebView?, newProgress: Int) {
             view?.url?.let { live -> if (live.isNotBlank()) tab.url = live }
-            // A fresh navigation starts at scroll 0. Reset both trackers
-            // here so a stale value from the previous page cannot
-            // suppress pull-to-refresh on the new one.
             if (newProgress == 0) {
                 tab.lastScrollY = 0
                 tab.scrollBridge.reset()
@@ -401,10 +454,7 @@ class TabManager(
                     ): Boolean {
                         val url = request?.url?.toString().orEmpty()
                         // Always dispose the trap WebView, regardless of
-                        // whether a usable URL arrived. A page can open a
-                        // window and then cancel or navigate to nothing;
-                        // without this the trap would leak native resources
-                        // until process death.
+                        // whether a usable URL arrived.
                         v?.post { runCatching { v.destroy() } }
                         if (url.isNotBlank()) create(url = url, makeActive = true)
                         return true
