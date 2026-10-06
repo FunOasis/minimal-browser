@@ -24,35 +24,49 @@ import java.io.OutputStream
  * Saves blob: and data: URL downloads by reading their bytes in-page
  * and writing them straight to disk.
  *
- * Why this exists:
- *   The system DownloadManager cannot fetch blob: URLs. The bytes only
- *   exist inside the renderer. GitHub's "Download raw file" button uses
- *   fetch + Blob + URL.createObjectURL, so its download arrives here as
- *   a blob: URL -- not as an http(s) URL. Chrome on Android solves this
- *   the same way: ask the page for the bytes via JS, then write them
- *   itself.
+ * Why blob capture, not fetch:
+ *   The naive approach -- take the blob URL we receive from the page,
+ *   then call fetch(blobUrl) from injected JS -- fails on any page that
+ *   revokes the object URL the moment it triggers the download. GitHub
+ *   does exactly that. The synthetic click, the requestFullscreen, the
+ *   revokeObjectURL call: all of them run in the same JS task, before
+ *   our evaluateJavascript post ever reaches the page. By the time we
+ *   try to fetch, the URL is dead and the renderer throws "Failed to
+ *   fetch".
+ *
+ *   Chrome avoids this because the Blob is captured synchronously, in
+ *   the same tick as createObjectURL. We do the same thing: inject a
+ *   small page-start script that wraps URL.createObjectURL, and keep a
+ *   strong reference to every Blob the page makes, keyed by URL string.
+ *   When our DownloadListener fires with a blob: URL, we look up the
+ *   Blob in that map and read its bytes directly. No fetch, no timing
+ *   race, no revocation window.
+ *
+ * Lifecycle:
+ *   1. injectCapture() runs at onPageStarted, before any page script.
+ *   2. The page calls URL.createObjectURL(blob) at some later point;
+ *      our wrapper records it in window.__mbBlobs.
+ *   3. User taps download. WebView fires DownloadListener. We call
+ *      start() with the blob: URL.
+ *   4. start() reads window.__mbBlobs[url], calls blob.arrayBuffer(),
+ *      and pushes the bytes across the bridge in 1 MB chunks.
+ *   5. deliverChunk() writes each chunk and finalises on isLast=true.
  *
  * Storage strategy:
- *   On API 29+, try MediaStore.Downloads first (public Downloads
- *   folder, no permission needed). If MediaStore rejects the insert --
- *   which happens on some ROMs for unfamiliar file extensions -- fall
- *   back to the app-specific external Downloads directory.
+ *   API 29+: MediaStore.Downloads first, fall back to app-specific
+ *   external Downloads on failure.
+ *   API 26-28: app-specific external Downloads. No runtime permission.
  *
- *   On API 26-28, skip MediaStore entirely and write to the app-specific
- *   external Downloads directory. This avoids needing WRITE_EXTERNAL_
- *   STORAGE at runtime, which the in-process download path (in
- *   DownloadHandler) no longer requests.
- *
- * Diagnostic toasts:
- *   Every failure now carries a suffix identifying which stage failed:
- *     ": openOutput"       -- could not create the destination file
- *     ": js-eval"          -- WebView refused to run the reader script
- *     ": write"            -- chunk write to the output stream failed
- *     ": decode"           -- base64 decode failed
- *     ": js <msg>"         -- page JS threw, msg carries the reason
- *     ": data-parse"       -- data: URL could not be parsed
- *     ": data-write"       -- data: URL parse succeeded but write failed
- *   A plain "Download failed" with no colon means an older build.
+ * Diagnostic toasts -- every failure path identifies itself:
+ *     ": openOutput ..."    destination creation failed
+ *     ": js-eval"           WebView refused to run the reader script
+ *     ": blob-not-captured" the URL is not in __mbBlobs
+ *     ": write"             chunk write failed
+ *     ": decode"            base64 decode failed
+ *     ": js <msg>"          page JS threw, msg carries the reason
+ *     ": data-parse"        data: URL malformed
+ *     ": data-write"        data: URL parsed, write failed
+ *   A bare "Download failed" means an older build.
  */
 object BlobDownloadHelper {
 
@@ -61,6 +75,39 @@ object BlobDownloadHelper {
     const val JS_NAME = "MBBlobBridge"
 
     private const val CHUNK_SIZE = 1 * 1024 * 1024
+
+    /**
+     * Page-start capture script. Idempotent via the __mbBlobs marker.
+     *
+     * We intentionally do NOT prevent the real revokeObjectURL from
+     * running -- the browser's own mapping is freed as soon as the page
+     * asks for it, which is what the page wants. Our captured Blob
+     * object lives independently: revoking the URL does not invalidate
+     * the Blob, and holding a strong reference to it keeps its backing
+     * bytes alive long enough for us to read them.
+     *
+     * The delayed delete of our own map entry is a small safety net.
+     * Sixty seconds is far more than any real download flow needs, and
+     * the map is capped at whatever the page creates in that window.
+     */
+    val CAPTURE_JS: String =
+        "(function(){" +
+            "if(window.__mbBlobs)return;" +
+            "window.__mbBlobs={};" +
+            "var origCreate=URL.createObjectURL.bind(URL);" +
+            "URL.createObjectURL=function(b){" +
+                "var u=origCreate(b);" +
+                "try{window.__mbBlobs[u]=b;}catch(e){}" +
+                "return u;" +
+            "};" +
+            "var origRevoke=URL.revokeObjectURL.bind(URL);" +
+            "URL.revokeObjectURL=function(u){" +
+                "try{origRevoke(u);}catch(e){}" +
+                "setTimeout(function(){" +
+                    "try{delete window.__mbBlobs[u];}catch(e){}" +
+                "},60000);" +
+            "};" +
+        "})();"
 
     private class Pending(
         val appContext: Context,
@@ -83,11 +130,36 @@ object BlobDownloadHelper {
     // Setup
     // ---------------------------------------------------------------------
 
+    /**
+     * Attach the JS bridge. Safe to call multiple times.
+     * The capture script is NOT installed here -- it must run in every
+     * new document, so it goes through injectCapture() from the
+     * WebViewClient's onPageStarted hook.
+     */
     fun install(webView: WebView) {
         try {
             webView.addJavascriptInterface(this, JS_NAME)
         } catch (t: Throwable) {
             Log.w(TAG, "install failed: " + t.message)
+        }
+    }
+
+    /**
+     * Inject the capture hook into the current document. Called from
+     * BlockingWebViewClient.onPageStarted so it runs before any page
+     * script -- that is what lets us intercept every createObjectURL.
+     * Skips internal pages, matching the pattern used by PageScrollProbe
+     * and CosmeticFilter.
+     */
+    fun injectCapture(webView: WebView, url: String?) {
+        if (url.isNullOrBlank()) return
+        if (url.startsWith(Prefs.HOME_URL)) return
+        if (url.startsWith("data:")) return
+        if (url.startsWith("about:")) return
+        try {
+            webView.evaluateJavascript(CAPTURE_JS, null)
+        } catch (t: Throwable) {
+            Log.w(TAG, "injectCapture failed: " + t.message)
         }
     }
 
@@ -131,7 +203,7 @@ object BlobDownloadHelper {
         val js = buildJs(blobUrl)
         try {
             webView.evaluateJavascript(js, null)
-            Log.i(TAG, "js posted to webview")
+            Log.i(TAG, "reader posted")
         } catch (t: Throwable) {
             Log.w(TAG, "evaluateJavascript failed: " + t.message)
             synchronized(lock) {
@@ -143,7 +215,7 @@ object BlobDownloadHelper {
     }
 
     // ---------------------------------------------------------------------
-    // Called from page JavaScript
+    // Bridge callbacks from the reader script
     // ---------------------------------------------------------------------
 
     @JavascriptInterface
@@ -177,9 +249,7 @@ object BlobDownloadHelper {
                     Log.w(TAG, "chunk write failed: " + writeError)
                     p.failed = true
                     finalizeDownload(p, success = false)
-                    synchronized(lock) {
-                        if (pending === p) pending = null
-                    }
+                    synchronized(lock) { if (pending === p) pending = null }
                     toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
                         ": write")
                     return
@@ -188,9 +258,7 @@ object BlobDownloadHelper {
                 Log.w(TAG, "chunk decode failed: " + t.message)
                 p.failed = true
                 finalizeDownload(p, success = false)
-                synchronized(lock) {
-                    if (pending === p) pending = null
-                }
+                synchronized(lock) { if (pending === p) pending = null }
                 toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
                     ": decode")
                 return
@@ -200,9 +268,7 @@ object BlobDownloadHelper {
         if (isLast) {
             Log.i(TAG, "complete, bytes=" + p.bytesWritten)
             finalizeDownload(p, success = true)
-            synchronized(lock) {
-                if (pending === p) pending = null
-            }
+            synchronized(lock) { if (pending === p) pending = null }
             toastOnUi(
                 p.activity,
                 p.activity.getString(R.string.download_saved, p.fileName)
@@ -215,17 +281,15 @@ object BlobDownloadHelper {
         val p = pending ?: return
         p.failed = true
         finalizeDownload(p, success = false)
-        synchronized(lock) {
-            if (pending === p) pending = null
-        }
+        synchronized(lock) { if (pending === p) pending = null }
         Log.w(TAG, "JS reported error: " + message)
         val short = if (message.length > 80) message.substring(0, 80) else message
         toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
-            ": js " + short)
+            ": " + short)
     }
 
     // ---------------------------------------------------------------------
-    // data: entry point
+    // data: URL
     // ---------------------------------------------------------------------
 
     fun startDataUrl(
@@ -243,10 +307,7 @@ object BlobDownloadHelper {
 
         CoroutineScope(Dispatchers.IO).launch {
             val ok = writeAllAtOnce(
-                activity.applicationContext,
-                name,
-                mime,
-                parsed.bytes
+                activity.applicationContext, name, mime, parsed.bytes
             )
             val msg = if (ok) {
                 activity.getString(R.string.download_saved, name)
@@ -257,23 +318,24 @@ object BlobDownloadHelper {
                 activity.runOnUiThread {
                     Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
                 }
-            } catch (_: Throwable) {
-                // Activity gone; drop the toast.
-            }
+            } catch (_: Throwable) {}
         }
     }
 
     // ---------------------------------------------------------------------
-    // JS builder
+    // Reader script -- reads the CAPTURED Blob, not the URL
     // ---------------------------------------------------------------------
 
     private fun buildJs(blobUrl: String): String {
         val urlLit = JSONObject.quote(blobUrl)
         return "(async function(){" +
             "try{" +
-                "var r=await fetch(" + urlLit + ");" +
-                "if(!r.ok){window." + JS_NAME + ".deliverError('HTTP '+r.status);return;}" +
-                "var b=await r.blob();" +
+                "var store=window.__mbBlobs||{};" +
+                "var b=store[" + urlLit + "];" +
+                "if(!b){" +
+                    "window." + JS_NAME + ".deliverError('blob-not-captured keys='+Object.keys(store).length);" +
+                    "return;" +
+                "}" +
                 "var ab=await b.arrayBuffer();" +
                 "var bytes=new Uint8Array(ab);" +
                 "var total=bytes.length;" +
@@ -301,7 +363,7 @@ object BlobDownloadHelper {
     }
 
     // ---------------------------------------------------------------------
-    // data: URL parsing
+    // data: parsing
     // ---------------------------------------------------------------------
 
     private data class DataPayload(
@@ -324,8 +386,7 @@ object BlobDownloadHelper {
             ?.substringBefore(';')
             ?: "application/octet-stream"
 
-        val ext = mimeToExt(mime)
-        val defaultName = "download_" + System.currentTimeMillis() + "." + ext
+        val defaultName = "download_" + System.currentTimeMillis() + "." + mimeToExt(mime)
 
         return try {
             val bytes = if (isBase64) {
@@ -360,16 +421,6 @@ object BlobDownloadHelper {
     // Destination
     // ---------------------------------------------------------------------
 
-    /**
-     * Open the destination. Returns null on success, or a short
-     * diagnostic string on failure.
-     *
-     * Strategy:
-     *   1. API 29+: try MediaStore.Downloads with IS_PENDING=1.
-     *   2. If that fails (or API < 29), use app-specific external
-     *      Downloads. No permission needed, visible to file managers
-     *      under Android/data/com.minimalbrowser/files/Download/.
-     */
     private fun openOutput(p: Pending): String? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
@@ -380,8 +431,7 @@ object BlobDownloadHelper {
                 }
                 val resolver = p.appContext.contentResolver
                 val uri = resolver.insert(
-                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                    values
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
                 )
                 if (uri != null) {
                     val os = resolver.openOutputStream(uri)
@@ -391,18 +441,17 @@ object BlobDownloadHelper {
                         Log.i(TAG, "destination: MediaStore")
                         return null
                     }
-                    Log.w(TAG, "MediaStore openOutputStream returned null")
+                    Log.w(TAG, "MediaStore openOutputStream null")
                     try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
                 } else {
-                    Log.w(TAG, "MediaStore insert returned null")
+                    Log.w(TAG, "MediaStore insert null")
                 }
             } catch (t: Throwable) {
-                Log.w(TAG, "MediaStore path threw: " +
+                Log.w(TAG, "MediaStore threw: " +
                     t.javaClass.simpleName + ": " + t.message)
             }
         }
 
-        // Fallback: app-specific external Downloads.
         return try {
             val dir = p.appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
                 ?: return "no-ext-dir"
@@ -413,7 +462,7 @@ object BlobDownloadHelper {
             Log.i(TAG, "destination: app dir " + f.absolutePath)
             null
         } catch (t: Throwable) {
-            Log.w(TAG, "app dir path threw: " +
+            Log.w(TAG, "app dir threw: " +
                 t.javaClass.simpleName + ": " + t.message)
             t.javaClass.simpleName
         }
@@ -433,11 +482,8 @@ object BlobDownloadHelper {
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.IS_PENDING, 0)
                 }
-                try {
-                    resolver.update(uri, values, null, null)
-                } catch (t: Throwable) {
-                    Log.w(TAG, "finalize update failed: " + t.message)
-                }
+                try { resolver.update(uri, values, null, null) }
+                catch (t: Throwable) { Log.w(TAG, "finalize update: " + t.message) }
             } else {
                 try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
             }
@@ -451,32 +497,24 @@ object BlobDownloadHelper {
     }
 
     // ---------------------------------------------------------------------
-    // data: URL disk write
+    // data: disk write
     // ---------------------------------------------------------------------
 
     private fun writeAllAtOnce(
-        context: Context,
-        fileName: String,
-        mime: String,
-        bytes: ByteArray
-    ): Boolean {
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                writeViaMediaStore(context, fileName, mime, bytes)
-            } else {
-                writeViaFile(context, fileName, bytes)
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "write failed: " + t.message)
-            false
+        context: Context, fileName: String, mime: String, bytes: ByteArray
+    ): Boolean = try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            writeViaMediaStore(context, fileName, mime, bytes)
+        } else {
+            writeViaFile(context, fileName, bytes)
         }
+    } catch (t: Throwable) {
+        Log.w(TAG, "write failed: " + t.message)
+        false
     }
 
     private fun writeViaMediaStore(
-        context: Context,
-        fileName: String,
-        mime: String,
-        bytes: ByteArray
+        context: Context, fileName: String, mime: String, bytes: ByteArray
     ): Boolean {
         try {
             val values = ContentValues().apply {
@@ -489,10 +527,7 @@ object BlobDownloadHelper {
             if (uri != null) {
                 val out = resolver.openOutputStream(uri)
                 if (out != null) {
-                    out.use {
-                        it.write(bytes)
-                        it.flush()
-                    }
+                    out.use { it.write(bytes); it.flush() }
                     values.clear()
                     values.put(MediaStore.Downloads.IS_PENDING, 0)
                     resolver.update(uri, values, null, null)
@@ -507,21 +542,16 @@ object BlobDownloadHelper {
     }
 
     private fun writeViaFile(
-        context: Context,
-        fileName: String,
-        bytes: ByteArray
-    ): Boolean {
-        return try {
-            val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                ?: return false
-            if (!dir.exists() && !dir.mkdirs()) return false
-            val target = File(dir, fileName)
-            FileOutputStream(target).use { it.write(bytes) }
-            true
-        } catch (t: Throwable) {
-            Log.w(TAG, "file write failed: " + t.message)
-            false
-        }
+        context: Context, fileName: String, bytes: ByteArray
+    ): Boolean = try {
+        val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: return false
+        if (!dir.exists() && !dir.mkdirs()) return false
+        FileOutputStream(File(dir, fileName)).use { it.write(bytes) }
+        true
+    } catch (t: Throwable) {
+        Log.w(TAG, "file write failed: " + t.message)
+        false
     }
 
     // ---------------------------------------------------------------------
@@ -533,9 +563,7 @@ object BlobDownloadHelper {
             activity.runOnUiThread {
                 Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
             }
-        } catch (_: Throwable) {
-            // Activity gone; drop the toast.
-        }
+        } catch (_: Throwable) {}
     }
 
     private fun toast(context: Context, msg: String) {
