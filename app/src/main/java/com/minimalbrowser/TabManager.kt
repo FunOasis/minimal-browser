@@ -390,6 +390,8 @@ class TabManager(
 
         wv.addJavascriptInterface(tab.scrollBridge, PageScrollProbe.JS_INTERFACE_NAME)
 
+        BlobDownloadHelper.install(wv)
+
         WebViewConfigurator.apply(wv, prefs.javaScriptEnabled)
 
         runCatching {
