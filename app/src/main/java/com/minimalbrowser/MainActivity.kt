@@ -95,6 +95,17 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+// Ask for notification permission on API 33+ so download
+// progress appears in the status bar. On earlier versions the
+// permission is granted implicitly and this is a no-op.
+        if (android.os.Build.VERSION.SDK_INT >= 33) {    
+            if (checkSelfPermission("android.permission.POST_NOTIFICATIONS")        
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {        
+                requestPermissions(            
+                    arrayOf("android.permission.POST_NOTIFICATIONS"), 9001        
+                )    
+            }
+        }        
 
         blocker = AdBlocker.get(this)
         prefs   = Prefs.get(this)
