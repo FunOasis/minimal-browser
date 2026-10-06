@@ -89,9 +89,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         )
 
         binding.swipeRefresh.setOnRefreshListener { tabManager.reloadActive() }
-        binding.swipeRefresh.setOnChildScrollUpCallback { _, _ ->
-            val wv = tabManager.getActiveWebView() ?: return@setOnChildScrollUpCallback false
-            wv.canScrollVertically(-1)
+        binding.swipeRefresh.setOnChildScrollUpCallback { _, _ ->    
+            tabManager.canActiveScrollUp()
         }
 
         binding.btnForward.setOnClickListener {
