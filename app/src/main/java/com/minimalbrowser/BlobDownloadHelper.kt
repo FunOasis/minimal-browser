@@ -12,10 +12,9 @@ import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.widget.Toast
-import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -258,17 +257,27 @@ object BlobDownloadHelper {
         val name = fileName.takeIf { it.isNotBlank() } ?: parsed.defaultName
         val mime = mimeType?.takeIf { it.isNotBlank() } ?: parsed.mime
 
-        activity.lifecycleScope.launch {
-            val ok = withContext(Dispatchers.IO) {
-                writeAllAtOnce(activity.applicationContext, name, mime, parsed.bytes)
-            }
+        // One-shot write: no lifecycleScope, no ComponentActivity cast.
+        // The payload is already fully in memory, so we just need a
+        // background thread and a runOnUiThread for the toast.
+        CoroutineScope(Dispatchers.IO).launch {
+            val ok = writeAllAtOnce(
+                activity.applicationContext,
+                name,
+                mime,
+                parsed.bytes
+            )
             val msg = if (ok) {
                 activity.getString(R.string.download_saved, name)
             } else {
                 activity.getString(R.string.download_failed)
             }
-            activity.runOnUiThread {
-                Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
+            try {
+                activity.runOnUiThread {
+                    Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
+                }
+            } catch (_: Throwable) {
+                // Activity gone; drop the toast.
             }
         }
     }
@@ -380,34 +389,46 @@ object BlobDownloadHelper {
      * Open the destination. On API 29+ this is a MediaStore Downloads
      * entry with IS_PENDING=1; on API 26-28 it is a plain File under the
      * public Downloads directory.
+     *
+     * Block body (not expression body) because we use early returns on
+     * the failure paths.
      */
-    private fun openOutput(p: Pending): Boolean = try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, p.fileName)
-                put(MediaStore.Downloads.MIME_TYPE, p.mime)
-                put(MediaStore.Downloads.IS_PENDING, 1)
+    private fun openOutput(p: Pending): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, p.fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, p.mime)
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val resolver = p.appContext.contentResolver
+                val uri = resolver.insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    values
+                )
+                if (uri == null) {
+                    false
+                } else {
+                    p.mediaStoreUri = uri
+                    p.output = resolver.openOutputStream(uri)
+                    p.output != null
+                }
+            } else {
+                val dir = Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_DOWNLOADS
+                )
+                if (!dir.exists() && !dir.mkdirs()) {
+                    false
+                } else {
+                    val f = File(dir, p.fileName)
+                    p.output = FileOutputStream(f)
+                    true
+                }
             }
-            val resolver = p.appContext.contentResolver
-            val uri = resolver.insert(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                values
-            ) ?: return false
-            p.mediaStoreUri = uri
-            p.output = resolver.openOutputStream(uri)
-            p.output != null
-        } else {
-            val dir = Environment.getExternalStoragePublicDirectory(
-                Environment.DIRECTORY_DOWNLOADS
-            )
-            if (!dir.exists() && !dir.mkdirs()) return false
-            val f = File(dir, p.fileName)
-            p.output = FileOutputStream(f)
-            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "openOutput failed: " + t.message)
+            false
         }
-    } catch (t: Throwable) {
-        Log.w(TAG, "openOutput failed: " + t.message)
-        false
     }
 
     /**
@@ -461,20 +482,27 @@ object BlobDownloadHelper {
     // data: URL disk write (single shot)
     // ---------------------------------------------------------------------
 
+    /**
+     * Block body (not expression body) because the two branches below
+     * ultimately call functions with early-return paths, and Kotlin is
+     * stricter when the containing function is `= try { ... }`.
+     */
     private fun writeAllAtOnce(
         context: Context,
         fileName: String,
         mime: String,
         bytes: ByteArray
-    ): Boolean = try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            writeViaMediaStore(context, fileName, mime, bytes)
-        } else {
-            writeViaFile(fileName, bytes)
+    ): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                writeViaMediaStore(context, fileName, mime, bytes)
+            } else {
+                writeViaFile(fileName, bytes)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "write failed: " + t.message)
+            false
         }
-    } catch (t: Throwable) {
-        Log.w(TAG, "write failed: " + t.message)
-        false
     }
 
     private fun writeViaMediaStore(
@@ -490,13 +518,18 @@ object BlobDownloadHelper {
         }
         val resolver = context.contentResolver
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-            ?: return false
+        if (uri == null) return false
 
         try {
-            resolver.openOutputStream(uri)?.use { out ->
-                out.write(bytes)
-                out.flush()
-            } ?: return false
+            val out = resolver.openOutputStream(uri)
+            if (out == null) {
+                try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
+                return false
+            }
+            out.use {
+                it.write(bytes)
+                it.flush()
+            }
         } catch (t: Throwable) {
             Log.w(TAG, "stream write failed: " + t.message)
             try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
