@@ -81,7 +81,7 @@ object DownloadHandler {
         if (url.isBlank()) return
 
         val scheme = runCatching { Uri.parse(url).scheme?.lowercase() }.getOrNull()
-        Log.i(TAG, "handle scheme=" + scheme + " url=" + url)
+        Log.i(TAG, "handle scheme=" + scheme + " len=" + contentLength + " url=" + url)
 
         when (scheme) {
             "blob" -> {
