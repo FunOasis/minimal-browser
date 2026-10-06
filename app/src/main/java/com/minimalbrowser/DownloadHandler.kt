@@ -25,15 +25,29 @@ import java.net.URLDecoder
  *   data:                      -> BlobDownloadHelper (inline decode)
  *   anything else              -> reject with a toast
  *
- * Filename fidelity (unchanged from before):
- *   URLUtil.guessFileName() is replaced with an explicit resolver
- *   because it trusts the server's Content-Type over the URL's own
- *   extension. Real-world servers routinely lie, producing names like
- *   README.md.txt, bundle.js.txt, clip.bin, which break every
- *   downstream tool that keys off the extension.
+ * Chrome parity notes:
+ *   Chrome does not consult a hardcoded extension->MIME table. It lets
+ *   the system MimeTypeMap decide from the file's extension, and only
+ *   falls back to application/octet-stream for unknown types. It also
+ *   does not set a description. Both are matched here.
  *
- *   Priority: URL extension > Content-Disposition extension >
- *   MIME-derived extension.
+ *   Chrome prefers Environment.DIRECTORY_DOWNLOADS as the destination
+ *   because that is where the user expects to find files. On some OEM
+ *   ROMs (HyperOS/MIUI in particular) that call can reject with a
+ *   SecurityException even on API 29+. When that happens we fall back
+ *   to the app-specific external Downloads directory, which the user
+ *   can reach via Android/data/com.minimalbrowser/files/Download/ and
+ *   which the in-app Downloads screen picks up either way.
+ *
+ *   The toast on failure includes the exception class name so that a
+ *   user without adb can still tell us what went wrong.
+ *
+ * Filename fidelity:
+ *   URLUtil.guessFileName() is replaced with an explicit resolver that
+ *   trusts the URL's own extension over the server Content-Type. Real
+ *   servers routinely lie (README.md.txt, bundle.js.txt, clip.bin),
+ *   which breaks every downstream tool that keys off the extension.
+ *   Priority: URL extension > Content-Disposition extension > MIME.
  */
 object DownloadHandler {
 
@@ -42,25 +56,6 @@ object DownloadHandler {
     private const val STORAGE_PERMISSION = android.Manifest.permission.WRITE_EXTERNAL_STORAGE
     private const val FALLBACK_MIME = "application/octet-stream"
     private const val MAX_FILENAME_LENGTH = 200
-
-    private val MIME_OVERRIDES = mapOf(
-        "md"       to "text/markdown",
-        "markdown" to "text/markdown",
-        "js"       to "application/javascript",
-        "mjs"      to "application/javascript",
-        "jsx"      to "text/jsx",
-        "ts"       to "application/typescript",
-        "tsx"      to "application/typescript",
-        "kt"       to "text/x-kotlin",
-        "kts"      to "text/x-kotlin",
-        "py"       to "text/x-python",
-        "rb"       to "text/x-ruby",
-        "rs"       to "text/x-rust",
-        "go"       to "text/x-go",
-        "toml"     to "application/toml",
-        "yaml"     to "application/yaml",
-        "yml"      to "application/yaml",
-    )
 
     private val EXTENDED_FILENAME_RE =
         Regex("""filename\*\s*=\s*[^']*''([^;\r\n]+)""", RegexOption.IGNORE_CASE)
@@ -178,11 +173,9 @@ object DownloadHandler {
 
     /**
      * Filename for a blob: URL. The blob URL itself looks like
-     * "blob:https://example.com/7e9a..." -- no useful tail in the
-     * common case. We try the MIME type first (the most reliable
-     * source), fall back to a filename extension embedded anywhere in
-     * the URL string (some pages build blob URLs with a trailing
-     * ".ext" for convenience), and only then default to ".bin".
+     * "blob:https://example.com/7e9a..." -- no useful tail in the common
+     * case. Try the MIME type first (most reliable), fall back to a
+     * trailing extension embedded in the URL string, then to ".bin".
      */
     private fun blobFallbackName(url: String, mimeType: String?): String {
         val fromMime = mimeType
@@ -215,63 +208,63 @@ object DownloadHandler {
         contentDisposition: String?,
         mimeType: String?
     ) {
+        val filename: String
         try {
-            val filename = guessFilename(url, contentDisposition, mimeType)
+            filename = guessFilename(url, contentDisposition, mimeType)
+        } catch (t: Throwable) {
+            Log.e(TAG, "filename resolution failed for " + url, t)
+            toastWithReason(context, t)
+            return
+        }
 
-            val ext = filename.substringAfterLast('.', "").lowercase()
-            val chosenMime =
-                if (ext.isBlank()) mimeType ?: FALLBACK_MIME
-                else mimeForExtension(ext, mimeType)
+        // Chrome-style MIME resolution: derive from the extension using
+        // the system table. Only consult the server's hint (or default
+        // to octet-stream) when the extension is unknown to the system.
+        val ext = filename.substringAfterLast('.', "").lowercase()
+        val chosenMime = when {
+            ext.isNotBlank() ->
+                MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+                    ?: mimeType?.takeIf { it.isNotBlank() }
+                    ?: FALLBACK_MIME
+            !mimeType.isNullOrBlank() -> mimeType
+            else -> FALLBACK_MIME
+        }
 
+        try {
             val request = DownloadManager.Request(Uri.parse(url)).apply {
                 setTitle(filename)
-                setDescription(url)
                 setMimeType(chosenMime)
                 setNotificationVisibility(
                     DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
                 )
+                setAllowedOverMetered(true)
+                setAllowedOverRoaming(true)
 
-                // Prefer the public Downloads directory so the file is
-                // reachable from a file manager and the system Downloads
-                // app. On a handful of OEM ROMs and some scoped-storage
-                // configurations, this call can throw because the app
-                // cannot mkdir the target directory. Rather than let the
-                // whole download fail, fall back to the app-specific
-                // external Downloads folder, which is still visible to
-                // the user under Android/data/<pkg>/files/Download/.
-                var destinationSet = false
+                // Public Downloads first -- that is where the user
+                // expects to find the file. On OEM ROMs that reject the
+                // call (SecurityException/IllegalArgumentException), fall
+                // back to the app-specific external Downloads folder.
+                var publicOk = false
                 try {
                     setDestinationInExternalPublicDir(
                         Environment.DIRECTORY_DOWNLOADS,
                         filename
                     )
-                    destinationSet = true
+                    publicOk = true
                 } catch (t: Throwable) {
-                    Log.w(TAG, "public Downloads destination rejected: " +
+                    Log.w(TAG, "public Downloads rejected: " +
                         t.javaClass.simpleName + ": " + t.message)
                 }
-                if (!destinationSet) {
-                    try {
-                        val dir = context.getExternalFilesDir(
-                            Environment.DIRECTORY_DOWNLOADS
-                        )
-                        if (dir != null) {
-                            if (!dir.exists()) dir.mkdirs()
-                            val target = File(dir, filename)
-                            setDestinationUri(Uri.fromFile(target))
-                            Log.i(TAG, "using app-specific destination: " + target)
-                        } else {
-                            throw IllegalStateException("no external files dir")
-                        }
-                    } catch (t: Throwable) {
-                        Log.w(TAG, "fallback destination failed too: " +
-                            t.javaClass.simpleName + ": " + t.message)
-                        throw t
-                    }
+                if (!publicOk) {
+                    val dir = context.getExternalFilesDir(
+                        Environment.DIRECTORY_DOWNLOADS
+                    ) ?: throw IllegalStateException(
+                        "external files dir unavailable"
+                    )
+                    if (!dir.exists()) dir.mkdirs()
+                    setDestinationUri(Uri.fromFile(File(dir, filename)))
+                    Log.i(TAG, "using app-specific dir: " + dir)
                 }
-
-                setAllowedOverMetered(true)
-                setAllowedOverRoaming(true)
             }
 
             CookieManager.getInstance().getCookie(url)?.let { cookie ->
@@ -282,17 +275,29 @@ object DownloadHandler {
             }
 
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            dm.enqueue(request)
-
+            val id = dm.enqueue(request)
+            Log.i(TAG, "enqueue ok id=" + id +
+                " name=" + filename +
+                " mime=" + chosenMime +
+                " url=" + url)
             toast(context, context.getString(R.string.download_started, filename))
         } catch (t: Throwable) {
-            // Log the concrete exception type too. "Download failed"
-            // alone is useless for diagnosing a user report; the class
-            // name and message pinpoint the exact call that blew up.
-            Log.w(TAG, "enqueue failed for " + url + ": " +
-                t.javaClass.simpleName + ": " + t.message)
-            toast(context, context.getString(R.string.download_failed))
+            Log.e(TAG, "enqueue failed url=" + url +
+                " name=" + filename +
+                " mime=" + chosenMime, t)
+            toastWithReason(context, t)
         }
+    }
+
+    /**
+     * Show the failure toast with the exception class appended. Without
+     * adb this is the fastest way for the user to tell us whether the
+     * destination, the MIME type, or the URI parser is at fault.
+     */
+    private fun toastWithReason(context: Context, t: Throwable) {
+        val base = context.getString(R.string.download_failed)
+        val reason = t.javaClass.simpleName
+        toast(context, base + ": " + reason)
     }
 
     private fun guessFilename(
@@ -323,12 +328,6 @@ object DownloadHandler {
             ?.takeIf { it.isNotBlank() }
             ?: "bin"
         return "download_" + System.currentTimeMillis() + "." + ext
-    }
-
-    private fun mimeForExtension(ext: String, serverMime: String?): String {
-        MIME_OVERRIDES[ext]?.let { return it }
-        MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)?.let { return it }
-        return serverMime?.takeIf { it.isNotBlank() } ?: FALLBACK_MIME
     }
 
     private fun lastPathSegment(url: String): String? = runCatching {
