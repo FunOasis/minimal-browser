@@ -91,23 +91,70 @@ class TabManager(
 
     /**
      * Rebuild the tab set from saved state. Called from MainActivity's
-     * onCreate when a previous process was killed and left a bundle of
-     * URLs behind. Only the saved active tab is loaded immediately; the
-     * others stay dormant until the user taps them.
+     * onCreate when Android is recreating the activity with a bundle
+     * (config change we do not handle, or process death after being
+     * backgrounded). Only the saved active tab is loaded immediately;
+     * the others stay dormant until tapped.
      *
-     * If the saved list is empty (should not happen -- MainActivity
-     * always has at least one tab), we fall back to a single home tab
+     * Contract for what survives:
+     *   preserved  -- the list of URLs, and which one was active
+     *   preserved  -- cookies, localStorage, HTTP cache (WebView-owned
+     *                 on-disk data, independent of this bundle)
+     *   lost       -- in-memory JS state, form field contents, scroll
+     *                 position, back/forward history, scroll offsets
+     *
+     * Same guarantees Chrome and Firefox give after process death.
+     *
+     * Input is treated as hostile: a saved bundle can carry junk if a
+     * page briefly had an exotic URL in the main frame. We accept only
+     * http, https, and minimal:// (home). Anything else is dropped.
+     * The count is capped at MAX_TABS. If every URL is dropped, or the
+     * list was empty to begin with, we fall back to a single home tab
      * so the activity is never left without a WebView.
      */
     fun restore(urls: List<String>, activeIndex: Int) {
-        if (urls.isEmpty()) {
+        // Defensive: if somehow we already have tabs (should not happen
+        // in the current lifecycle, but a future refactor could call
+        // restore from a different path), tear them down first so we
+        // do not stack two sets of WebViews.
+        if (_tabs.isNotEmpty()) {
+            destroyAll()
+        }
+
+        val cleaned = ArrayList<String>(urls.size)
+        for (raw in urls) {
+            val u = raw.trim()
+            if (u.isEmpty()) continue
+            if (!isRestorable(u)) continue
+            cleaned.add(u)
+            if (cleaned.size >= MAX_TABS) break
+        }
+
+        if (cleaned.isEmpty()) {
             create()
             return
         }
-        for (u in urls) {
+
+        for (u in cleaned) {
             create(url = u, makeActive = false)
         }
         switchTo(activeIndex.coerceIn(0, _tabs.size - 1))
+    }
+
+    /**
+     * Which URLs are safe to feed back into loadUrl on next launch.
+     * http and https are obvious. minimal://home is our own internal
+     * page and should restore. Everything else -- about:, data:, blob:,
+     * javascript:, content://, file:// -- is excluded. A user who was
+     * on one of those when the process died does not meaningfully miss
+     * it, and restoring a script: URL into a fresh WebView is exactly
+     * the class of thing we do not want on our hands.
+     */
+    private fun isRestorable(url: String): Boolean {
+        val lower = url.lowercase()
+        return lower.startsWith("http://") ||
+            lower.startsWith("https://") ||
+            lower.startsWith("minimal://")
     }
 
     fun closeTab(index: Int) {
