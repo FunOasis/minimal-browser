@@ -8,6 +8,8 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.TextUtils
 import android.text.TextWatcher
@@ -50,15 +52,33 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     // True between the user tapping Exit (or confirming the exit dialog)
     // and the activity actually finishing. When set, we skip both the
-    // Bundle save and the disk snapshot, and clear the disk snapshot, so
-    // the next launch starts clean.
+    // Bundle save and the disk snapshot, and clear the disk snapshot.
     private var exiting: Boolean = false
 
-    private var suggestionPopup: PopupWindow? = null
+    // True while the activity is between onPause and onResume. Drives the
+    // aggressive background freeze threshold in the tab-freeze scheduler.
+    private var isBackgrounded: Boolean = false
+
+    private val suggestionPopup: PopupWindow? = null
     private var suggestionList: ListView? = null
     private var suggestionAdapter: ArrayAdapter<String>? = null
     private var currentSuggestions: List<HistoryStore.Entry> = emptyList()
     private var suppressSuggestionRefresh = false
+
+    // Periodic checker that freezes idle tabs. Runs only while the
+    // activity is resumed; cancelled in onPause.
+    private val freezeHandler = Handler(Looper.getMainLooper())
+    private val freezeTick = object : Runnable {
+        override fun run() {
+            if (isFinishing || isDestroyed) return
+            val frozen = tabManager.freezeIdleTabs(isBackgrounded)
+            if (frozen > 0) {
+                // Tab UI state may have changed (badges, sheet cells).
+                updateTabBadge()
+            }
+            freezeHandler.postDelayed(this, FREEZE_CHECK_INTERVAL_MS)
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -115,8 +135,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.addressBar.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 binding.addressBar.post { binding.addressBar.selectAll() }
-                // Suggestions only appear once the user types — an empty
-                // focus does not dump history.
             } else {
                 dismissSuggestions()
             }
@@ -152,14 +170,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             }
         })
 
-        // Tab set restore priority:
-        //   1. If we have saved state, rebuild the tab set from saved URLs.
-        //      A shortcut URL arriving on top of restored tabs loads in the
-        //      active tab rather than creating a new one, so the restored
-        //      layout is not disturbed.
-        //   2. Else if a shortcut URL is present in the intent, start with
-        //      one tab at that URL.
-        //   3. Else start with a single home tab.
         val savedUrls = savedInstanceState?.getStringArrayList(KEY_TAB_URLS)
         val savedActive = savedInstanceState?.getInt(KEY_ACTIVE_TAB, 0) ?: 0
         val shortcutUrl = intent?.getStringExtra(EXTRA_SHORTCUT_URL)
@@ -211,19 +221,9 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     /**
-     * Persist enough tab state to rebuild the session if the OS kills
-     * the process while we are backgrounded, or if a config change we
-     * do not declare in configChanges (uiMode, locale) recreates the
-     * activity. We deliberately do not use WebView.saveState() -- it
-     * is heavyweight, version-sensitive, and has a history of restoring
-     * stale DOM into a fresh renderer. Saving URLs and the active index
-     * is enough.
-     *
-     * Not saved when the user explicitly exits. finishAndRemoveTask()
-     * removes the task, so the bundle would never be consumed, but
-     * skipping the write keeps the intent obvious to anyone reading
-     * this later.
-     */        
+     * Persist tab URLs and active index into the Bundle for
+     * system-initiated process death.
+     */
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         if (exiting || isFinishing) return
@@ -237,8 +237,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     /**
      * Persist the session to disk. onStop is the last reliable lifecycle
-     * hook before the OS may reclaim the process. It runs before every
-     * backgrounding that is followed by process death, including the
+     * hook before the OS may reclaim the process -- it runs before the
      * swipe-from-recents path that skips onSaveInstanceState entirely.
      */
     override fun onStop() {
@@ -254,13 +253,36 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
         SessionStore.save(this, urls, titles, tabManager.getActiveIndex())
     }
+
     override fun onResume() {
         super.onResume()
+        isBackgrounded = false
+
+        // Bring the active tab back if it was frozen while backgrounded.
+        tabManager.unfreezeActiveIfFrozen()
+
         tabManager.getActiveWebView()?.resumeTimers()
         tabManager.resumeActive()
+
+        // Start the freeze scheduler.
+        freezeHandler.removeCallbacks(freezeTick)
+        freezeHandler.postDelayed(freezeTick, FREEZE_CHECK_INTERVAL_MS)
     }
 
     override fun onPause() {
+        isBackgrounded = true
+
+        // Freeze aggressively on the way out. Anything that has not been
+        // touched in FREEZE_AFTER_BG_MS is released; the active tab is
+        // included because the user is not looking at anything.
+        val frozen = tabManager.freezeIdleTabs(isBackgrounded = true)
+        if (frozen > 0) updateTabBadge()
+
+        // Stop the periodic scheduler -- the OS will not run handlers on
+        // a backgrounded activity anyway, and we do not want a wakeup when
+        // we come back before the user has seen the tab set.
+        freezeHandler.removeCallbacks(freezeTick)
+
         tabManager.pauseAll()
         tabManager.getActiveWebView()?.pauseTimers()
         super.onPause()
@@ -270,6 +292,10 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         super.onTrimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             tabManager.trimAllCaches()
+            // Under memory pressure, be more aggressive: treat this as a
+            // signal to release anything not the active tab. The active
+            // tab keeps its 10-minute threshold.
+            tabManager.freezeIdleTabs(isBackgrounded = false)
         }
     }
 
@@ -284,6 +310,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     override fun onDestroy() {
         dismissSuggestions()
+        freezeHandler.removeCallbacks(freezeTick)
         tabManager.destroyAll()
         super.onDestroy()
     }
@@ -557,7 +584,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     // -------------------------------------------------------------------------
-    // Ad blocking dialog — warehouse driven
+    // Ad blocking dialog -- warehouse driven
     // -------------------------------------------------------------------------
 
     private fun showCustomFiltersDialog() {
@@ -661,12 +688,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             .show()
     }
 
-    /**
-     * Fetch newly added lists on the activity's lifecycle scope, not a
-     * bare CoroutineScope. If the user rotates or leaves the dialog
-     * mid-fetch, the coroutine is cancelled with the activity and the
-     * withContext(Main) block never runs against a destroyed context.
-     */
     private fun fetchNewLists(store: BlocklistStore, urls: List<String>) {
         lifecycleScope.launch(Dispatchers.IO) {
             var ok = 0
@@ -716,7 +737,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         if (view !== tabManager.getActiveWebView()) return
         updateFooterFor(url)
 
-        // Internal home has no favicon; wipe stale state on arrival.
         if (url.startsWith(Prefs.HOME_URL)) {
             tabManager.getActive()?.favicon = null
             binding.favicon.setImageDrawable(null)
@@ -834,5 +854,10 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         private const val MAX_VISIBLE_SUGGESTIONS = 6
         private const val KEY_TAB_URLS = "mb_tab_urls"
         private const val KEY_ACTIVE_TAB = "mb_active_tab"
+
+        // How often the freeze scheduler runs while the activity is
+        // resumed. 60s is granular enough for a 10-minute threshold
+        // and cheap enough to be invisible.
+        private const val FREEZE_CHECK_INTERVAL_MS = 60_000L
     }
 }
