@@ -43,6 +43,17 @@ class Prefs private constructor(context: Context) {
             "https://blocklistproject.github.io/Lists/ads.txt\n" +
             "https://blocklistproject.github.io/Lists/tracking.txt"
 
+        /**
+         * Cosmetic-rule sources seeded on first boot of the cosmetic
+         * warehouse. Both are full EasyList-format lists; the parser
+         * picks up only the cosmetic (## / #@#) lines and ignores the
+         * network-blocking rules, which are handled by AdBlocker
+         * separately.
+         */
+        const val DEFAULT_COSMETIC_URLS =
+            "https://easylist.to/easylist/easylist.txt\n" +
+            "https://easylist.to/easylist/easyprivacy.txt"
+
         @Volatile private var inst: Prefs? = null
 
         fun get(context: Context): Prefs =
