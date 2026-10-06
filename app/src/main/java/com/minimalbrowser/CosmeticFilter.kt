@@ -3,43 +3,44 @@ package com.minimalbrowser
 import android.util.Log
 import android.webkit.WebView
 import org.json.JSONObject
+import java.net.URI
 
 /**
  * Cosmetic filtering.
  *
- * After a page has loaded, inject a single CSS block into the page's
- * <html> element that hides well-known ad containers by selector.
+ * Injects a single CSS block into the page after load. Because CSS is
+ * declarative, any ad element the page injects later -- after a
+ * scroll, on a timer, on an XHR response -- is hidden automatically
+ * without any MutationObserver, per-element work, or runtime CPU cost.
  *
- * This is a visual cleanup layer on top of AdBlocker, not a replacement
- * for it. When AdBlocker kills the network request for an ad script, the
- * page's own inline JavaScript frequently still creates an empty
- * <ins class="adsbygoogle"> or a <div id="div-gpt-ad-..."> and reserves
- * layout space for it. Blocking the request alone leaves that empty
- * rectangle visible. Hiding it with CSS makes the page look clean.
+ * Rules come from one of two places:
  *
- * The stylesheet rule is applied once per navigation and lives in the
- * document for the lifetime of that page. Because CSS is declarative,
- * any ad element that the page injects later (after a scroll, on a
- * timer, on an XHR response) is hidden automatically -- no
- * MutationObserver, no per-element work, no runtime CPU cost.
+ *   1. CosmeticStore (subscription-backed). Parsed once at boot from
+ *      whatever EasyList-format lists are in the cosmetic warehouse.
+ *      Includes both generic and per-domain selectors.
  *
- * The selector list is deliberately small and conservative: every entry
- * is a specific, well-known ad-system string. We avoid generic patterns
- * like [class^="ad-"] because they collide with legitimate page
- * furniture (".ad-tracker", ".lead-advisor", ".read-more-ad").
+ *   2. FALLBACK_SELECTORS (built-in). Used when the cosmetic
+ *      warehouse is empty -- first boot, offline, or the user cleared
+ *      every list. A curated list of high-confidence ad-container
+ *      selectors drawn from EasyList and AdGuard Base.
+ *
+ * The injected CSS is capped at MAX_CSS_BYTES. If a page's rule set
+ * exceeds the cap, the earlier rules win because EasyList orders its
+ * lists roughly from most to least common.
  */
 object CosmeticFilter {
 
     private const val TAG = "CosmeticFilter"
     private const val STYLE_ID = "mb-cosmetic-filter"
+    private const val MAX_CSS_BYTES = 96 * 1024
 
     /**
-     * Curated, high-confidence ad-container selectors. Drawn from the
-     * public EasyList and AdGuard Base cosmetic-rule sets, filtered down
-     * to entries that are safe against false positives.
+     * Curated fallback selectors. Every entry is a specific, well-known
+     * ad-system string. Generic patterns like class^="ad-" are
+     * deliberately absent -- they collide with legitimate page
+     * furniture (.ad-tracker, .read-more-ad, etc.).
      */
-    private val SELECTORS: List<String> = listOf(
-        // Google AdSense / Ad Exchange / Ad Manager
+    private val FALLBACK_SELECTORS: List<String> = listOf(
         "ins.adsbygoogle",
         "[id^=\"google_ads_\"]",
         "[id^=\"div-gpt-ad\"]",
@@ -49,8 +50,6 @@ object CosmeticFilter {
         "iframe[src*=\"googlesyndication.com\"]",
         "iframe[src*=\"googleadservices.com\"]",
         "iframe[src*=\"adservice.google\"]",
-
-        // Common explicit class names
         ".adsbygoogle",
         ".ad-banner",
         ".ad-container",
@@ -60,69 +59,65 @@ object CosmeticFilter {
         ".advertising",
         ".sponsored-content",
         ".sponsored-post",
-
-        // Common explicit element IDs
         "#ad-top",
         "#ad-bottom",
         "#ad-container",
         "#advertisement",
         "#banner-ad",
-
-        // ARIA-labelled ad regions
         "[aria-label=\"Advertisement\"]",
         "[aria-label=\"advertisement\"]",
         "[aria-label=\"Ad\"]",
-
-        // Taboola / Outbrain native-ad widgets
         "[id*=\"taboola\"]",
         "[class*=\"taboola\"]",
         "[id*=\"outbrain\"]",
         "[class*=\"outbrain\"]",
         ".trc_rbox",
         ".OUTBRAIN",
-
-        // Prebid / header-bidding wrappers
         "[id^=\"prebid\"]",
         "[class*=\"prebid\"]"
     )
 
+    @Volatile private var rules: CosmeticRules? = null
+
     /**
-     * The CSS rule body. One selector list, one declaration block. The
-     * !important keeps hostile page CSS from overriding us.
+     * Per-host CSS string cache. Small: page loads repeat the same host
+     * many times in a browsing session, and rebuilding the selector
+     * union from 20k+ strings every navigation is wasteful. Cleared
+     * whenever the rule set changes.
      */
-    private val CSS: String by lazy {
-        val sb = StringBuilder(1024)
-        var first = true
-        for (sel in SELECTORS) {
-            if (!first) sb.append(",\n")
-            sb.append(sel)
-            first = false
-        }
-        sb.append(" { display: none !important; visibility: hidden !important; }\n")
-        sb.toString()
+    private val cssCache = object : LinkedHashMap<String, String>(16, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<String, String>
+        ): Boolean = size > 16
     }
 
     /**
-     * The JS that injects the stylesheet. Built via concatenation rather
-     * than a Kotlin template string to keep the source readable and to
-     * avoid the chat-renderer issue with dollar-brace interpolation.
+     * Called after CosmeticStore has produced fresh raw text. Parsing
+     * happens on the caller's thread -- invoke from Dispatchers.IO.
      *
-     * JSONObject.quote() handles all escaping (newlines, quotes, backslashes)
-     * so we never have to hand-roll it.
-     *
-     * Idempotent: guards on STYLE_ID so a second call to onPageFinished
-     * does not create a duplicate <style> element.
+     * If the incoming text yields zero usable rules we keep whatever
+     * was loaded previously (including the fallback) rather than
+     * blanking out the cosmetic layer entirely.
      */
-    private val JS: String by lazy {
-        val quotedCss = JSONObject.quote(CSS)
-        "(function(){" +
-            "if(document.getElementById('" + STYLE_ID + "'))return;" +
-            "var s=document.createElement('style');" +
-            "s.id='" + STYLE_ID + "';" +
-            "s.textContent=" + quotedCss + ";" +
-            "(document.head||document.documentElement).appendChild(s);" +
-            "})();"
+    fun updateFrom(text: String) {
+        if (text.isEmpty()) return
+        val parsed = CosmeticRules.parse(text)
+        if (parsed.genericCount == 0 && parsed.domainCount == 0) {
+            Log.w(TAG, "Parsed 0 rules -- keeping previous set")
+            return
+        }
+        rules = parsed
+        synchronized(cssCache) { cssCache.clear() }
+        Log.i(TAG, "Rules loaded: generic=" + parsed.genericCount +
+            " domain=" + parsed.domainCount +
+            " domains=" + parsed.domainKeys)
     }
+
+    /**
+     * True if subscription-backed rules have been loaded. Diagnostics
+     * only -- the filter works either way.
+     */
+    fun hasSubscriptionRules(): Boolean = rules != null
 
     /**
      * Inject the cosmetic stylesheet into the given WebView. Safe to
@@ -135,10 +130,57 @@ object CosmeticFilter {
         if (url.startsWith("data:")) return
         if (url.startsWith("about:")) return
 
+        val css = cssFor(url, rules)
+        if (css.isEmpty()) return
+
+        val quoted = JSONObject.quote(css)
+        val js = "(function(){" +
+            "var e=document.getElementById('" + STYLE_ID + "');" +
+            "if(e){e.textContent=" + quoted + ";return;}" +
+            "var s=document.createElement('style');" +
+            "s.id='" + STYLE_ID + "';" +
+            "s.textContent=" + quoted + ";" +
+            "(document.head||document.documentElement).appendChild(s);" +
+            "})();"
+
         try {
-            webView.evaluateJavascript(JS, null)
+            webView.evaluateJavascript(js, null)
         } catch (t: Throwable) {
             Log.w(TAG, "inject failed: " + t.message)
         }
+    }
+
+    private fun cssFor(url: String, current: CosmeticRules?): String {
+        val key = hostKey(url)
+        synchronized(cssCache) {
+            cssCache[key]?.let { return it }
+        }
+        val selectors = if (current == null) FALLBACK_SELECTORS
+                        else current.selectorsFor(url)
+        val css = buildCss(selectors)
+        synchronized(cssCache) {
+            cssCache[key] = css
+        }
+        return css
+    }
+
+    private fun hostKey(url: String): String = try {
+        URI(url).host?.lowercase() ?: url
+    } catch (_: Exception) {
+        url
+    }
+
+    private fun buildCss(selectors: List<String>): String {
+        val sb = StringBuilder(64 * 1024)
+        var first = true
+        for (s in selectors) {
+            if (!first) sb.append(',')
+            sb.append(s)
+            first = false
+            if (sb.length >= MAX_CSS_BYTES) break
+        }
+        if (first) return ""
+        sb.append("{display:none !important;visibility:hidden !important;}")
+        return sb.toString()
     }
 }
