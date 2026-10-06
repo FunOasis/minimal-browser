@@ -18,6 +18,7 @@ import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.widget.ArrayAdapter
 import android.widget.EditText
@@ -30,6 +31,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.minimalbrowser.databinding.ActivityMainBinding
@@ -58,6 +62,14 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     // aggressive background freeze threshold in the tab-freeze scheduler.
     private var isBackgrounded: Boolean = false
 
+    // Fullscreen presentation state. Populated while a page is using the
+    // HTML5 Fullscreen API (video player, manga reader, PDF viewer, or a
+    // generic requestFullscreen call). fullscreenView is the WebView-owned
+    // View we attach over the chrome; fullscreenCallback is the handle we
+    // hand back to WebView when the user exits via Back.
+    private var fullscreenView: View? = null
+    private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
+
     private var suggestionPopup: PopupWindow? = null
     private var suggestionList: ListView? = null
     private var suggestionAdapter: ArrayAdapter<String>? = null
@@ -72,7 +84,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             if (isFinishing || isDestroyed) return
             val frozen = tabManager.freezeIdleTabs(isBackgrounded)
             if (frozen > 0) {
-                // Tab UI state may have changed (badges, sheet cells).
                 updateTabBadge()
             }
             freezeHandler.postDelayed(this, FREEZE_CHECK_INTERVAL_MS)
@@ -110,7 +121,9 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
                     binding.favicon.visibility = View.VISIBLE
                 }
             },
-            onTabsChanged = { updateTabBadge() }
+            onTabsChanged = { updateTabBadge() },
+            onFullscreenShow = { view, callback -> enterFullscreen(view, callback) },
+            onFullscreenHide = { exitFullscreen() }
         )
 
         binding.swipeRefresh.setOnRefreshListener { tabManager.reloadActive() }
@@ -152,6 +165,13 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                // Fullscreen takes priority: exiting fullscreen is the
+                // natural "back" gesture, matching every video player
+                // and manga reader on Android.
+                if (tabManager.isInFullscreen()) {
+                    requestExitFullscreen()
+                    return
+                }
                 if (suggestionPopup?.isShowing == true) {
                     dismissSuggestions()
                     return
@@ -257,6 +277,11 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         super.onResume()
         isBackgrounded = false
 
+        // Some devices strip the immersive flags when the activity is
+        // paused (an incoming call, a notification tap). Re-apply them
+        // if we are still in fullscreen.
+        if (fullscreenView != null) hideSystemBars()
+
         // Bring the active tab back if it was frozen while backgrounded.
         tabManager.unfreezeActiveIfFrozen()
 
@@ -277,9 +302,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         val frozen = tabManager.freezeIdleTabs(isBackgrounded = true)
         if (frozen > 0) updateTabBadge()
 
-        // Stop the periodic scheduler -- the OS will not run handlers on
-        // a backgrounded activity anyway, and we do not want a wakeup when
-        // we come back before the user has seen the tab set.
+        // Stop the periodic scheduler.
         freezeHandler.removeCallbacks(freezeTick)
 
         tabManager.pauseAll()
@@ -291,9 +314,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         super.onTrimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             tabManager.trimAllCaches()
-            // Under memory pressure, be more aggressive: treat this as a
-            // signal to release anything not the active tab. The active
-            // tab keeps its 10-minute threshold.
             tabManager.freezeIdleTabs(isBackgrounded = false)
         }
     }
@@ -308,10 +328,126 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     override fun onDestroy() {
+        // Detach any fullscreen view before the activity tears down.
+        // TabManager.destroyAll() also fires onFullscreenHide, but we
+        // clean up defensively in case the callback order surprises us.
+        fullscreenView?.let { v ->
+            (v.parent as? ViewGroup)?.removeView(v)
+        }
+        fullscreenView = null
+        fullscreenCallback = null
+        showSystemBars()
+
         dismissSuggestions()
         freezeHandler.removeCallbacks(freezeTick)
         tabManager.destroyAll()
         super.onDestroy()
+    }
+
+    // -------------------------------------------------------------------------
+    // Fullscreen
+    // -------------------------------------------------------------------------
+
+    /**
+     * Attach the WebView's fullscreen content surface on top of the
+     * chrome and go immersive.
+     *
+     * Where the view lands: the framework's root FrameLayout
+     * (android.R.id.content). Our activity's own LinearLayout stays
+     * intact beneath it, but visually is completely covered. This is
+     * the standard Android pattern -- it survives rotation and lets
+     * the fullscreen view span the entire screen, including under
+     * where the status bar was.
+     *
+     * Reentry guard: some pages call requestFullscreen() twice in a
+     * row. If we are already showing a fullscreen view, reject the
+     * second request and immediately dismiss its callback, which is
+     * what Chrome does.
+     */
+    private fun enterFullscreen(view: View, callback: WebChromeClient.CustomViewCallback) {
+        if (fullscreenView != null) {
+            try { callback.onCustomViewHidden() } catch (_: Throwable) {}
+            return
+        }
+        fullscreenView = view
+        fullscreenCallback = callback
+
+        // Hide our chrome. The WebView keeps rendering underneath; we
+        // just make its surface invisible so nothing bleeds through the
+        // fullscreen view's transparent pixels.
+        binding.topBar.visibility = View.GONE
+        binding.progressBar.visibility = View.GONE
+        binding.footerText.visibility = View.GONE
+        binding.swipeRefresh.visibility = View.GONE
+        binding.webViewContainer.visibility = View.GONE
+
+        // Attach the fullscreen surface. MATCH_PARENT in both axes
+        // covers the whole window once decorFitsSystemWindows is false.
+        val root = findViewById<ViewGroup>(android.R.id.content)
+        root.addView(
+            view,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        hideSystemBars()
+    }
+
+    /**
+     * Called when the WebView has decided the fullscreen session is
+     * over. Either the page called exitFullscreen() itself, or we asked
+     * for it via requestExitFullscreen() and the WebView completed the
+     * teardown. Either way, the visual state is now ours to restore.
+     */
+    private fun exitFullscreen() {
+        val view = fullscreenView ?: return
+        fullscreenView = null
+        fullscreenCallback = null
+
+        (view.parent as? ViewGroup)?.removeView(view)
+
+        binding.topBar.visibility = View.VISIBLE
+        binding.footerText.visibility = View.VISIBLE
+        binding.swipeRefresh.visibility = View.VISIBLE
+        binding.webViewContainer.visibility = View.VISIBLE
+
+        showSystemBars()
+    }
+
+    /**
+     * User-initiated exit (Back press while fullscreen). We invoke the
+     * callback WebView gave us at onShowCustomView; that tells the
+     * renderer to leave fullscreen, which fires onHideCustomView() on
+     * the TabWebChromeClient, which routes back into exitFullscreen().
+     *
+     * We deliberately do not tear down the view here. Letting WebView
+     * drive the teardown keeps the state machine in one place.
+     */
+    private fun requestExitFullscreen() {
+        val cb = fullscreenCallback ?: return
+        try {
+            cb.onCustomViewHidden()
+        } catch (_: Throwable) {
+            // If the callback is stale for any reason, clean up directly
+            // so the toolbar cannot get stuck hidden.
+            exitFullscreen()
+        }
+    }
+
+    private fun hideSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    private fun showSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.show(WindowInsetsCompat.Type.systemBars())
     }
 
     // -------------------------------------------------------------------------
@@ -490,8 +626,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             true
         }
 
-        R.id.action_downloads -> {    
-            startActivity(Intent(this, DownloadsActivity::class.java))    
+        R.id.action_downloads -> {
+            startActivity(Intent(this, DownloadsActivity::class.java))
             true
         }
 
@@ -781,15 +917,15 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         recreate()
     }
 
-    override fun onDownloadRequested(view: WebView, url: String) {    
-        DownloadHandler.handle(        
-            activity = this,        
-            webView = view,        
-            url = url,        
-            userAgent = view.settings.userAgentString,        
-            contentDisposition = null,        
-            mimeType = null,        
-            contentLength = -1L    
+    override fun onDownloadRequested(view: WebView, url: String) {
+        DownloadHandler.handle(
+            activity = this,
+            webView = view,
+            url = url,
+            userAgent = view.settings.userAgentString,
+            contentDisposition = null,
+            mimeType = null,
+            contentLength = -1L
         )
     }
 
@@ -851,9 +987,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         private const val KEY_TAB_URLS = "mb_tab_urls"
         private const val KEY_ACTIVE_TAB = "mb_active_tab"
 
-        // How often the freeze scheduler runs while the activity is
-        // resumed. 60s is granular enough for a 10-minute threshold
-        // and cheap enough to be invisible.
         private const val FREEZE_CHECK_INTERVAL_MS = 60_000L
     }
 }
