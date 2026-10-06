@@ -2,7 +2,6 @@ package com.minimalbrowser
 
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -110,15 +109,24 @@ class DownloadsActivity : AppCompatActivity() {
 
     private fun showRowMenu(item: DownloadRepository.Item, anchor: View) {
         val menu = PopupMenu(this, anchor)
+        val canPause = repo.supportsPauseResume
 
         when {
             item.isRunning -> {
-                menu.menu.add(0, MENU_PAUSE, 0, R.string.downloads_action_pause)
-                menu.menu.add(0, MENU_CANCEL, 1, R.string.downloads_action_cancel)
+                if (canPause) {
+                    menu.menu.add(0, MENU_PAUSE, 0, R.string.downloads_action_pause)
+                    menu.menu.add(0, MENU_CANCEL, 1, R.string.downloads_action_cancel)
+                } else {
+                    menu.menu.add(0, MENU_CANCEL, 0, R.string.downloads_action_cancel)
+                }
             }
             item.isPaused -> {
-                menu.menu.add(0, MENU_RESUME, 0, R.string.downloads_action_resume)
-                menu.menu.add(0, MENU_CANCEL, 1, R.string.downloads_action_cancel)
+                if (canPause) {
+                    menu.menu.add(0, MENU_RESUME, 0, R.string.downloads_action_resume)
+                    menu.menu.add(0, MENU_CANCEL, 1, R.string.downloads_action_cancel)
+                } else {
+                    menu.menu.add(0, MENU_CANCEL, 0, R.string.downloads_action_cancel)
+                }
             }
             item.isSuccess -> {
                 menu.menu.add(0, MENU_OPEN, 0, R.string.downloads_action_open)
