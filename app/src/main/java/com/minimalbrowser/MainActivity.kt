@@ -59,7 +59,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     // aggressive background freeze threshold in the tab-freeze scheduler.
     private var isBackgrounded: Boolean = false
 
-    private val suggestionPopup: PopupWindow? = null
+    private var suggestionPopup: PopupWindow? = null
     private var suggestionList: ListView? = null
     private var suggestionAdapter: ArrayAdapter<String>? = null
     private var currentSuggestions: List<HistoryStore.Entry> = emptyList()
