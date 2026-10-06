@@ -60,6 +60,8 @@
     <string name="download_unsupported">This type of download isn\'t supported</string>
     <string name="download_permission_denied">Storage permission required to save files</string>
     <string name="download_no_app">No downloads app found</string>
+    <string name="download_saved">Saved %1$s</string>
+    <string name="download_too_big">File too large to save</string>
 
     <string name="shortcut_requested">Shortcut added to home screen</string>
     <string name="shortcut_unsupported">Your launcher doesn\'t support adding shortcuts</string>
