@@ -20,20 +20,6 @@ import com.minimalbrowser.databinding.ActivityDownloadsBinding
 import com.minimalbrowser.databinding.ItemDownloadBinding
 import java.util.Locale
 
-/**
- * Full-screen downloads list, backed by the system DownloadManager.
- *
- * Refresh strategy: while the activity is resumed, a Handler posts a
- * Runnable every 1 second if any row is actively downloading, or every
- * 3 seconds otherwise. The Runnable re-queries DownloadManager, diffs
- * the result into the adapter, and re-schedules itself. Everything is
- * cancelled in onPause -- no wakeups while the user is not looking.
- *
- * Why not LiveData / observeForever? The DownloadManager has no
- * observer API. Polling is the only option, and at this size it is
- * cheap. A 1-second tick while a download is on-screen is a single
- * cursor walk -- micro-seconds on the platform side.
- */
 class DownloadsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityDownloadsBinding
@@ -93,11 +79,7 @@ class DownloadsActivity : AppCompatActivity() {
     private fun clearCompleted() {
         val n = repo.clearCompleted()
         if (n <= 0) {
-            Toast.makeText(
-                this,
-                R.string.downloads_nothing_to_clear,
-                Toast.LENGTH_SHORT
-            ).show()
+            Toast.makeText(this, R.string.downloads_nothing_to_clear, Toast.LENGTH_SHORT).show()
         } else {
             refresh()
         }
@@ -112,6 +94,11 @@ class DownloadsActivity : AppCompatActivity() {
         val canPause = repo.supportsPauseResume
 
         when {
+            item.isLocal -> {
+                menu.menu.add(0, MENU_OPEN, 0, R.string.downloads_action_open)
+                menu.menu.add(0, MENU_SHARE, 1, R.string.downloads_action_share)
+                menu.menu.add(0, MENU_DELETE, 2, R.string.downloads_action_delete)
+            }
             item.isRunning -> {
                 if (canPause) {
                     menu.menu.add(0, MENU_PAUSE, 0, R.string.downloads_action_pause)
@@ -146,17 +133,12 @@ class DownloadsActivity : AppCompatActivity() {
 
         menu.setOnMenuItemClickListener { mi ->
             when (mi.itemId) {
-                MENU_PAUSE -> { repo.pause(item.id); refresh(); true }
-                MENU_RESUME -> { repo.resume(item.id); refresh(); true }
-                MENU_CANCEL -> { repo.cancel(item.id); refresh(); true }
+                MENU_PAUSE -> { repo.pause(item); refresh(); true }
+                MENU_RESUME -> { repo.resume(item); refresh(); true }
+                MENU_CANCEL -> { repo.cancel(item); refresh(); true }
                 MENU_RETRY -> {
-                    val newId = repo.retry(item)
-                    if (newId == null) {
-                        Toast.makeText(
-                            this,
-                            R.string.downloads_retry_failed,
-                            Toast.LENGTH_SHORT
-                        ).show()
+                    if (repo.retry(item) == null) {
+                        Toast.makeText(this, R.string.downloads_retry_failed, Toast.LENGTH_SHORT).show()
                     }
                     refresh()
                     true
@@ -172,13 +154,9 @@ class DownloadsActivity : AppCompatActivity() {
     }
 
     private fun openItem(item: DownloadRepository.Item) {
-        val uri = repo.fileUriFor(item.id)
+        val uri = repo.fileUriFor(item)
         if (uri == null) {
-            Toast.makeText(
-                this,
-                R.string.downloads_file_missing,
-                Toast.LENGTH_SHORT
-            ).show()
+            Toast.makeText(this, R.string.downloads_file_missing, Toast.LENGTH_SHORT).show()
             return
         }
         val mime = item.mimeType.ifBlank { "*/*" }
@@ -186,21 +164,16 @@ class DownloadsActivity : AppCompatActivity() {
             setDataAndType(uri, mime)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        try {
-            startActivity(intent)
-        } catch (e: ActivityNotFoundException) {
+        try { startActivity(intent) }
+        catch (e: ActivityNotFoundException) {
             Toast.makeText(this, R.string.downloads_no_app, Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun shareItem(item: DownloadRepository.Item) {
-        val uri = repo.fileUriFor(item.id)
+        val uri = repo.fileUriFor(item)
         if (uri == null) {
-            Toast.makeText(
-                this,
-                R.string.downloads_file_missing,
-                Toast.LENGTH_SHORT
-            ).show()
+            Toast.makeText(this, R.string.downloads_file_missing, Toast.LENGTH_SHORT).show()
             return
         }
         val mime = item.mimeType.ifBlank { "*/*" }
@@ -210,18 +183,15 @@ class DownloadsActivity : AppCompatActivity() {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         try {
-            startActivity(
-                Intent.createChooser(intent, getString(R.string.downloads_action_share))
-            )
+            startActivity(Intent.createChooser(intent, getString(R.string.downloads_action_share)))
         } catch (e: ActivityNotFoundException) {
             Toast.makeText(this, R.string.downloads_no_app, Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun openSystemDownloads() {
-        try {
-            startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
-        } catch (e: ActivityNotFoundException) {
+        try { startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS)) }
+        catch (e: ActivityNotFoundException) {
             Toast.makeText(this, R.string.download_no_app, Toast.LENGTH_SHORT).show()
         }
     }
@@ -229,17 +199,10 @@ class DownloadsActivity : AppCompatActivity() {
     private fun confirmDelete(item: DownloadRepository.Item) {
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.downloads_delete_confirm_title)
-            .setMessage(
-                getString(R.string.downloads_delete_confirm_message, item.fileName)
-            )
+            .setMessage(getString(R.string.downloads_delete_confirm_message, item.fileName))
             .setPositiveButton(R.string.downloads_delete_confirm_yes) { _, _ ->
-                val ok = repo.deleteFile(item)
-                if (!ok) {
-                    Toast.makeText(
-                        this,
-                        R.string.downloads_delete_failed,
-                        Toast.LENGTH_SHORT
-                    ).show()
+                if (!repo.deleteFile(item)) {
+                    Toast.makeText(this, R.string.downloads_delete_failed, Toast.LENGTH_SHORT).show()
                 }
                 refresh()
             }
@@ -267,9 +230,7 @@ class DownloadsActivity : AppCompatActivity() {
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
             val b = ItemDownloadBinding.inflate(
-                LayoutInflater.from(parent.context),
-                parent,
-                false
+                LayoutInflater.from(parent.context), parent, false
             )
             return VH(b)
         }
@@ -280,22 +241,17 @@ class DownloadsActivity : AppCompatActivity() {
 
         override fun getItemCount(): Int = items.size
 
-        inner class VH(val b: ItemDownloadBinding) :
-            RecyclerView.ViewHolder(b.root) {
-
+        inner class VH(val b: ItemDownloadBinding) : RecyclerView.ViewHolder(b.root) {
             fun bind(item: DownloadRepository.Item) {
                 b.rowName.text = item.fileName
                 b.rowStatus.text = statusLine(item)
-
                 if (item.isRunning && item.progressPercent >= 0) {
                     b.rowProgress.visibility = View.VISIBLE
                     b.rowProgress.setProgressCompat(item.progressPercent, true)
                 } else {
                     b.rowProgress.visibility = View.GONE
                 }
-
                 b.rowMenu.setOnClickListener { v -> onMenu(item, v) }
-
                 b.root.setOnClickListener {
                     if (item.isSuccess) onMenu(item, b.rowMenu)
                 }
@@ -311,8 +267,7 @@ class DownloadsActivity : AppCompatActivity() {
         val sizeText: String = when {
             item.totalBytes > 0L ->
                 formatBytes(item.bytesDownloaded) + " / " + formatBytes(item.totalBytes)
-            item.bytesDownloaded > 0L ->
-                formatBytes(item.bytesDownloaded)
+            item.bytesDownloaded > 0L -> formatBytes(item.bytesDownloaded)
             else -> ""
         }
 
@@ -325,9 +280,7 @@ class DownloadsActivity : AppCompatActivity() {
                         sz,
                         humanAge(item.lastModified)
                     )
-                } else {
-                    getString(R.string.downloads_status_completed)
-                }
+                } else getString(R.string.downloads_status_completed)
             }
             item.isRunning -> {
                 val pct = item.progressPercent
@@ -337,9 +290,7 @@ class DownloadsActivity : AppCompatActivity() {
                         pct.toString(),
                         sizeText
                     )
-                } else {
-                    getString(R.string.downloads_status_running)
-                }
+                } else getString(R.string.downloads_status_running)
             }
             item.isPaused -> getString(R.string.downloads_status_paused)
             item.isFailed -> getString(
