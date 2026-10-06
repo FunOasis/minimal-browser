@@ -9,6 +9,17 @@
     android:fitsSystemWindows="true"
     tools:context=".MainActivity">
 
+    <!--
+        Topbar rhythm rule: every horizontal gap in this row equals
+        @dimen/topbar_gap, and the padding at both screen edges equals
+        the same value. Concretely:
+          [8dp][forward][8dp][badge][8dp][urlpill][8dp][menu][8dp]
+        Each item carries only a leading margin (marginStart), never a
+        trailing margin, so the distance between any two neighbours is
+        exactly one gap. The first item inherits its left inset from
+        topBar's paddingStart, and the last item inherits its right
+        inset from topBar's paddingEnd.
+    -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
@@ -24,8 +35,6 @@
             android:id="@+id/btnForward"
             android:layout_width="@dimen/icon_button_size"
             android:layout_height="@dimen/icon_button_size"
-            android:layout_marginStart="2dp"
-            android:layout_marginEnd="2dp"
             android:background="@drawable/bg_icon_glass"
             android:contentDescription="@string/cd_forward"
             android:padding="@dimen/icon_button_padding"
@@ -37,8 +46,7 @@
             android:id="@+id/tabBadge"
             android:layout_width="wrap_content"
             android:layout_height="32dp"
-            android:layout_marginStart="2dp"
-            android:layout_marginEnd="4dp"
+            android:layout_marginStart="@dimen/topbar_gap"
             android:background="@drawable/bg_tab_badge"
             android:gravity="center"
             android:minWidth="44dp"
@@ -57,7 +65,7 @@
             android:layout_width="0dp"
             android:layout_height="@dimen/urlbar_height"
             android:layout_weight="1"
-            android:layout_marginStart="@dimen/urlbar_margin_start"
+            android:layout_marginStart="@dimen/topbar_gap"
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:background="@drawable/bg_urlbar"
@@ -97,7 +105,7 @@
             android:id="@+id/btnMenu"
             android:layout_width="@dimen/icon_button_size"
             android:layout_height="@dimen/icon_button_size"
-            android:layout_marginStart="4dp"
+            android:layout_marginStart="@dimen/topbar_gap"
             android:background="@drawable/bg_icon_glass_rect"
             android:contentDescription="@string/cd_menu"
             android:padding="@dimen/icon_button_padding"
