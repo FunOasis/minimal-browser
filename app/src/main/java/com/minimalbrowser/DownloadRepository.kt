@@ -10,37 +10,24 @@ import java.io.File
 import java.lang.reflect.Method
 
 /**
- * Read/write facade over Android's system DownloadManager.
+ * Read/write facade over two sources of downloads:
  *
- * The DownloadManager is the engine: it owns the transfer, survives
- * Doze, resumes after reboot, and posts the completion notification.
- * This class only reads its rows into a plain Kotlin data class and
- * forwards pause/resume/cancel/retry requests back to it.
+ *   1. The system DownloadManager (http/https downloads enqueued by
+ *      the old code path and by any future path that wants the system
+ *      transfer engine).
+ *   2. LocalDownloadsStore (files written by our in-process downloader
+ *      for blob: and data: URLs).
  *
- * Why not a custom downloader? Because DownloadManager already gives
- * us everything a browser needs -- HTTP stack, notifications, retry,
- * pause/resume, scoped-storage-compatible destination -- without an
- * in-process foreground service to babysit. Chrome on Android uses it
- * too.
- *
- * Pause/Resume via reflection:
- *   DownloadManager.pauseDownload(long...) and resumeDownload(long...)
- *   are annotated @SystemApi -- they are present on every device at
- *   runtime but are stripped from the public compile SDK, so a direct
- *   call does not compile. We resolve them once via reflection and
- *   cache the Method handles. If either is missing at runtime (a
- *   hypothetical OEM build that removed them), supportsPauseResume
- *   returns false and the UI hides those actions.
- *
- * Query cost: listAll() is a single cursor walk over the app's own
- * download rows. At tens of rows this is sub-millisecond on the
- * platform side, cheap enough to poll once per second while the
- * Downloads screen is visible.
+ * listAll() merges both, newest first. Actions dispatch on Item.source:
+ * pause/resume/cancel/retry are DownloadManager-only; open/share/delete
+ * work on both.
  */
 class DownloadRepository(private val appContext: Context) {
 
     companion object {
         private const val TAG = "DownloadRepository"
+        const val SOURCE_DM = 0
+        const val SOURCE_LOCAL = 1
 
         @Volatile private var pauseMethod: Method? = null
         @Volatile private var resumeMethod: Method? = null
@@ -77,45 +64,34 @@ class DownloadRepository(private val appContext: Context) {
         val bytesDownloaded: Long,
         val totalBytes: Long,
         val localUri: Uri?,
-        val lastModified: Long
+        val lastModified: Long,
+        val source: Int
     ) {
+        val isLocal: Boolean get() = source == SOURCE_LOCAL
         val isRunning: Boolean
-            get() = status == DownloadManager.STATUS_RUNNING ||
-                status == DownloadManager.STATUS_PENDING
-
+            get() = !isLocal && (status == DownloadManager.STATUS_RUNNING ||
+                status == DownloadManager.STATUS_PENDING)
         val isPaused: Boolean
-            get() = status == DownloadManager.STATUS_PAUSED
-
+            get() = !isLocal && status == DownloadManager.STATUS_PAUSED
         val isSuccess: Boolean
-            get() = status == DownloadManager.STATUS_SUCCESSFUL
-
+            get() = isLocal || status == DownloadManager.STATUS_SUCCESSFUL
         val isFailed: Boolean
-            get() = status == DownloadManager.STATUS_FAILED
-
-        val isDone: Boolean
-            get() = isSuccess || isFailed
-
-        /** 0..100, or -1 if the total size is not yet known. */
+            get() = !isLocal && status == DownloadManager.STATUS_FAILED
+        val isDone: Boolean get() = isSuccess || isFailed
         val progressPercent: Int
             get() {
+                if (isLocal) return 100
                 if (totalBytes <= 0L) return -1
                 val p = (bytesDownloaded * 100L) / totalBytes
                 return p.toInt().coerceIn(0, 100)
             }
     }
 
-    init {
-        resolveReflection()
-    }
+    init { resolveReflection() }
 
     private fun dm(): DownloadManager =
         appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
 
-    /**
-     * True if this device's DownloadManager exposes pause/resume to
-     * reflection. False on hypothetical OEM builds that stripped them.
-     * The UI uses this to decide whether to offer those actions.
-     */
     val supportsPauseResume: Boolean
         get() {
             resolveReflection()
@@ -123,14 +99,16 @@ class DownloadRepository(private val appContext: Context) {
         }
 
     // ----------------------------------------------------------------
-    // Read
+    // Read (merged)
     // ----------------------------------------------------------------
 
     fun listAll(): List<Item> {
-        // The public SDK does not expose a sort hint on
-        // DownloadManager.Query, so we fetch all rows and sort them in
-        // Kotlin below. The list is tiny (tens of rows at most), so the
-        // cost is nil.
+        val dmItems = readDownloadManager()
+        val localItems = readLocal()
+        return (dmItems + localItems).sortedByDescending { it.lastModified }
+    }
+
+    private fun readDownloadManager(): List<Item> {
         val query = DownloadManager.Query()
         val cursor: Cursor? = try {
             dm().query(query)
@@ -139,37 +117,46 @@ class DownloadRepository(private val appContext: Context) {
             return emptyList()
         }
         if (cursor == null) return emptyList()
-
         val out = ArrayList<Item>(cursor.count)
         cursor.use { c ->
             while (c.moveToNext()) {
-                try {
-                    out.add(readRow(c))
-                } catch (t: Throwable) {
-                    Log.w(TAG, "row skipped: " + t.message)
-                }
+                try { out.add(readRow(c)) }
+                catch (t: Throwable) { Log.w(TAG, "row skipped: " + t.message) }
             }
         }
-        // Newest first.
-        out.sortByDescending { it.lastModified }
         return out
+    }
+
+    private fun readLocal(): List<Item> {
+        return try {
+            LocalDownloadsStore.get(appContext).listAll().map { e ->
+                Item(
+                    id = e.id,
+                    url = e.uri,
+                    fileName = e.name,
+                    mimeType = e.mime,
+                    status = DownloadManager.STATUS_SUCCESSFUL,
+                    reason = 0,
+                    bytesDownloaded = e.size,
+                    totalBytes = e.size,
+                    localUri = Uri.parse(e.uri),
+                    lastModified = e.timestamp,
+                    source = SOURCE_LOCAL
+                )
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "readLocal failed: " + t.message)
+            emptyList()
+        }
     }
 
     private fun readRow(c: Cursor): Item {
         val id = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_ID))
         val url = c.getString(c.getColumnIndexOrThrow(DownloadManager.COLUMN_URI)) ?: ""
-        val title = c.getString(
-            c.getColumnIndexOrThrow(DownloadManager.COLUMN_TITLE)
-        ).orEmpty()
-        val mime = c.getString(
-            c.getColumnIndexOrThrow(DownloadManager.COLUMN_MEDIA_TYPE)
-        ) ?: ""
-        val status = c.getInt(
-            c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)
-        )
-        val reason = c.getInt(
-            c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON)
-        )
+        val title = c.getString(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TITLE)).orEmpty()
+        val mime = c.getString(c.getColumnIndexOrThrow(DownloadManager.COLUMN_MEDIA_TYPE)) ?: ""
+        val status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+        val reason = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
         val bytes = c.getLong(
             c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
         )
@@ -185,149 +172,104 @@ class DownloadRepository(private val appContext: Context) {
         val modified = c.getLong(
             c.getColumnIndexOrThrow(DownloadManager.COLUMN_LAST_MODIFIED_TIMESTAMP)
         )
-        val name = title.ifBlank { deriveNameFromUrl(url) }
-        return Item(id, url, name, mime, status, reason, bytes, total, localUri, modified)
+        val name = title.ifBlank { Uri.parse(url).lastPathSegment ?: "download" }
+        return Item(
+            id, url, name, mime, status, reason, bytes, total,
+            localUri, modified, SOURCE_DM
+        )
     }
 
-    private fun deriveNameFromUrl(url: String): String =
-        Uri.parse(url).lastPathSegment ?: "download"
-
-    /**
-     * Content URI that other apps can safely open or receive. Returns
-     * null if the download has not completed. Prefer this over
-     * COLUMN_LOCAL_URI for Open/Share -- on API 24+ a file:// URI
-     * passed across app boundaries throws FileUriExposedException.
-     */
-    fun fileUriFor(id: Long): Uri? = try {
-        dm().getUriForDownloadedFile(id)
-    } catch (t: Throwable) {
-        Log.w(TAG, "fileUriFor failed: " + t.message)
-        null
+    fun fileUriFor(item: Item): Uri? {
+        if (item.isLocal) return item.localUri
+        return try { dm().getUriForDownloadedFile(item.id) }
+        catch (t: Throwable) {
+            Log.w(TAG, "fileUriFor failed: " + t.message)
+            null
+        }
     }
 
     // ----------------------------------------------------------------
     // Control
     // ----------------------------------------------------------------
 
-    fun pause(id: Long): Boolean {
+    fun pause(item: Item): Boolean {
+        if (item.isLocal) return false
         resolveReflection()
         val m = pauseMethod ?: return false
-        return try {
-            val ids = longArrayOf(id)
-            m.invoke(dm(), ids)
-            true
-        } catch (t: Throwable) {
-            Log.w(TAG, "pause failed: " + t.message)
-            false
-        }
+        return try { m.invoke(dm(), longArrayOf(item.id)); true }
+        catch (t: Throwable) { Log.w(TAG, "pause failed: " + t.message); false }
     }
 
-    fun resume(id: Long): Boolean {
+    fun resume(item: Item): Boolean {
+        if (item.isLocal) return false
         resolveReflection()
         val m = resumeMethod ?: return false
-        return try {
-            val ids = longArrayOf(id)
-            m.invoke(dm(), ids)
-            true
-        } catch (t: Throwable) {
-            Log.w(TAG, "resume failed: " + t.message)
-            false
-        }
+        return try { m.invoke(dm(), longArrayOf(item.id)); true }
+        catch (t: Throwable) { Log.w(TAG, "resume failed: " + t.message); false }
     }
 
-    /** Cancel a running or paused download. Removes the row from the DB. */
-    fun cancel(id: Long): Boolean {
-        return try {
-            val ids = longArrayOf(id)
-            dm().remove(*ids) > 0
-        } catch (t: Throwable) {
-            Log.w(TAG, "cancel failed: " + t.message)
-            false
-        }
+    fun cancel(item: Item): Boolean {
+        if (item.isLocal) return false
+        return try { dm().remove(item.id) > 0 }
+        catch (t: Throwable) { Log.w(TAG, "cancel failed: " + t.message); false }
     }
 
-    /**
-     * Delete the downloaded file and remove the DB row. Safe on any
-     * status: an active download is cancelled first, a partial file is
-     * deleted along with the row.
-     */
     fun deleteFile(item: Item): Boolean {
-        var removed = false
-
-        // Try the content resolver first. On API 29+ MediaStore owns the
-        // row, and deleting it also drops DownloadManager's record.
-        val uri = item.localUri
-        if (uri != null) {
-            try {
-                val n = appContext.contentResolver.delete(uri, null, null)
-                if (n > 0) removed = true
-            } catch (t: Throwable) {
-                Log.w(TAG, "contentResolver.delete failed: " + t.message)
+        if (item.isLocal) {
+            var ok = false
+            item.localUri?.let { uri ->
+                // If it's a MediaStore URI, deleting through the content
+                // resolver removes both the row and the file. A file://
+                // URI needs the File API instead.
+                try {
+                    val n = appContext.contentResolver.delete(uri, null, null)
+                    if (n > 0) ok = true
+                } catch (_: Throwable) {}
+                if (!ok && "file".equals(uri.scheme, ignoreCase = true)) {
+                    val path = uri.path
+                    if (!path.isNullOrBlank()) {
+                        try { if (File(path).delete()) ok = true } catch (_: Throwable) {}
+                    }
+                }
             }
+            LocalDownloadsStore.get(appContext).remove(item.url)
+            return ok || true // the entry is gone from our list either way
         }
 
-        // Fallback A: file:// URI on API 26-28 where MediaStore owns a
-        // separate row that the resolver may refuse to touch.
-        if (!removed && uri != null && "file".equals(uri.scheme, ignoreCase = true)) {
-            val path = uri.path
-            if (!path.isNullOrBlank()) {
-                try {
-                    val f = File(path)
-                    if (f.exists() && f.delete()) removed = true
-                } catch (t: Throwable) {
-                    Log.w(TAG, "File.delete(uri) failed: " + t.message)
+        var removed = false
+        item.localUri?.let { uri ->
+            try {
+                if (appContext.contentResolver.delete(uri, null, null) > 0) removed = true
+            } catch (t: Throwable) { Log.w(TAG, "resolver delete: " + t.message) }
+            if (!removed && "file".equals(uri.scheme, ignoreCase = true)) {
+                uri.path?.let { p ->
+                    try { if (File(p).delete()) removed = true } catch (_: Throwable) {}
                 }
             }
         }
-
-        // Fallback B: raw file under the public Downloads folder, using
-        // the display name. Covers cases where the URI was empty or
-        // pointed somewhere unexpected.
         if (!removed) {
             try {
                 val dir = Environment.getExternalStoragePublicDirectory(
                     Environment.DIRECTORY_DOWNLOADS
                 )
-                val f = File(dir, item.fileName)
-                if (f.exists() && f.delete()) removed = true
-            } catch (t: Throwable) {
-                Log.w(TAG, "File.delete(name) failed: " + t.message)
-            }
+                if (File(dir, item.fileName).delete()) removed = true
+            } catch (_: Throwable) {}
         }
-
-        // Always scrub the DownloadManager row so the list actually
-        // empties even if the file was already gone.
-        try {
-            val ids = longArrayOf(item.id)
-            dm().remove(*ids)
-        } catch (_: Throwable) {
-            // ignore
-        }
-
+        try { dm().remove(item.id) } catch (_: Throwable) {}
         return removed
     }
 
-    /**
-     * Remove the row from DownloadManager without touching the file.
-     * Used to hide a completed download from our list while keeping
-     * the actual file in the public Downloads folder.
-     */
-    fun removeFromList(id: Long): Boolean {
-        return try {
-            val ids = longArrayOf(id)
-            dm().remove(*ids) > 0
-        } catch (t: Throwable) {
-            Log.w(TAG, "remove failed: " + t.message)
-            false
+    fun removeFromList(item: Item): Boolean {
+        if (item.isLocal) {
+            LocalDownloadsStore.get(appContext).remove(item.url)
+            return true
         }
+        return try { dm().remove(item.id) > 0 }
+        catch (t: Throwable) { Log.w(TAG, "remove failed: " + t.message); false }
     }
 
-    /**
-     * Re-enqueue a failed download. Uses the original URL, filename,
-     * and MIME type; the failed row is removed on success.
-     * Returns the new download id, or null on failure.
-     */
     fun retry(item: Item): Long? {
+        if (item.isLocal) return null
         return try {
             val request = DownloadManager.Request(Uri.parse(item.url)).apply {
                 setTitle(item.fileName)
@@ -344,12 +286,7 @@ class DownloadRepository(private val appContext: Context) {
                 setAllowedOverRoaming(true)
             }
             val newId = dm().enqueue(request)
-            try {
-                val ids = longArrayOf(item.id)
-                dm().remove(*ids)
-            } catch (_: Throwable) {
-                // ignore
-            }
+            try { dm().remove(item.id) } catch (_: Throwable) {}
             newId
         } catch (t: Throwable) {
             Log.w(TAG, "retry failed: " + t.message)
@@ -357,14 +294,10 @@ class DownloadRepository(private val appContext: Context) {
         }
     }
 
-    /**
-     * Remove every finished (successful or failed) row from the list.
-     * Files on disk are left untouched.
-     */
     fun clearCompleted(): Int {
         var count = 0
         for (item in listAll()) {
-            if (item.isDone && removeFromList(item.id)) count++
+            if (item.isDone && removeFromList(item)) count++
         }
         return count
     }
