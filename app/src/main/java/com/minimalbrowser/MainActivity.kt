@@ -188,27 +188,28 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     /**
      * Persist enough tab state to rebuild the session if the OS kills
-     * the process while we are backgrounded. We deliberately do not use
-     * WebView.saveState() -- it is heavy and unreliable across WebView
-     * versions. Saving URLs and the active index is enough: on restore,
-     * only the active tab is loaded immediately; the rest stay dormant
-     * until tapped.
+     * the process while we are backgrounded, or if a config change we
+     * do not declare in configChanges (uiMode, locale) recreates the
+     * activity. We deliberately do not use WebView.saveState() -- it
+     * is heavyweight, version-sensitive, and has a history of restoring
+     * stale DOM into a fresh renderer. Saving URLs and the active index
+     * is enough.
      *
-     * Note: rotation does not hit this path because the manifest lists
-     * orientation|screenSize|keyboardHidden in configChanges. This only
-     * fires on actual process death, which is exactly when we want it.
+     * Not saved when the user explicitly exits. finishAndRemoveTask()
+     * removes the task, so the bundle would never be consumed, but
+     * skipping the write keeps the intent obvious to anyone reading
+     * this later.
      */
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
+        if (isFinishing) return
         val tabs = tabManager.tabs
-        if (tabs.isNotEmpty()) {
-            val urls = ArrayList<String>(tabs.size)
-            for (t in tabs) urls.add(t.url)
-            outState.putStringArrayList(KEY_TAB_URLS, urls)
-            outState.putInt(KEY_ACTIVE_TAB, tabManager.getActiveIndex())
-        }
+        if (tabs.isEmpty()) return
+        val urls = ArrayList<String>(tabs.size)
+        for (t in tabs) urls.add(t.url)
+        outState.putStringArrayList(KEY_TAB_URLS, urls)
+        outState.putInt(KEY_ACTIVE_TAB, tabManager.getActiveIndex())
     }
-
     override fun onResume() {
         super.onResume()
         tabManager.getActiveWebView()?.resumeTimers()
