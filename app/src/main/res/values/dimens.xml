@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Topbar: one gap value drives everything so the bar reads as a
+         single rhythmic strip. Edge padding equals inter-item gap. -->
     <dimen name="topbar_padding_h">8dp</dimen>
     <dimen name="topbar_padding_v">8dp</dimen>
+    <dimen name="topbar_gap">8dp</dimen>
 
     <dimen name="icon_button_size">40dp</dimen>
     <dimen name="icon_button_padding">8dp</dimen>
 
     <dimen name="urlbar_height">44dp</dimen>
-    <dimen name="urlbar_margin_start">4dp</dimen>
     <dimen name="urlbar_padding_start">14dp</dimen>
     <dimen name="urlbar_padding_end">2dp</dimen>
     <dimen name="urlbar_corner">22dp</dimen>
