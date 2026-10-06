@@ -12,22 +12,20 @@ import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
 
 /**
- * Periodic background refresh of the blocklist warehouse.
+ * Periodic background refresh of the two warehouses:
  *
- * Runs every 12 hours (WorkManager's minimum granularity is 15 minutes;
- * 12h is a deliberate compromise -- the store's own freshness check
- * still skips lists younger than 24h, so the second daily run is a
- * cheap timestamp-only no-op most of the time).
+ *   - BlocklistStore   (host-based ad blocking, 24h per-list freshness)
+ *   - CosmeticStore    (EasyList cosmetic rules, 72h per-list freshness)
  *
- * Why not a coroutine in MinimalBrowserApp:
- *  - a coroutine dies when the process is killed; the user swiping the
- *    app away at 10pm would cancel a 2am scheduled refresh
- *  - Doze mode would defer or drop a bare coroutine
- *  - WorkManager survives process death, wakes on Doze exit, retries
- *    with exponential backoff on transient failures
+ * Both are refreshed on the same 12h tick. The stores' own freshness
+ * checks skip lists that are still young, so the second daily run is
+ * usually a timestamp-only no-op.
  *
- * Network constraint is CONNECTED (any network). If you want to force
- * Wi-Fi-only refresh, change to NetworkType.UNMETERED below.
+ * Why WorkManager and not a coroutine in MinimalBrowserApp:
+ *  - a coroutine dies when the process is killed
+ *  - Doze mode defers or drops bare coroutines
+ *  - WorkManager survives process death, wakes on Doze exit, and
+ *    retries with exponential backoff on transient failures
  */
 class BlocklistRefreshWorker(
     appContext: Context,
@@ -36,25 +34,44 @@ class BlocklistRefreshWorker(
 
     override suspend fun doWork(): Result {
         return try {
-            val store = BlocklistStore.get(applicationContext)
-            val summary = store.refreshAll(force = false)
-            Log.i(TAG, "Background refresh: refreshed=" + summary.refreshed +
-                " failed=" + summary.failed +
-                " skipped=" + summary.skipped +
-                " totalHosts=" + summary.totalHosts)
-
-            // If anything actually changed on disk, rebuild the in-memory
-            // trie so the currently running process picks up the new hosts.
-            // If the process is dead, this is a harmless no-op: the next
-            // launch will rebuild from disk anyway.
-            if (summary.refreshed > 0) {
-                AdBlocker.get(applicationContext).reloadCustomRules()
-            }
-
+            refreshHosts()
+            refreshCosmetics()
             Result.success()
         } catch (t: Throwable) {
             Log.w(TAG, "Background refresh failed: " + t.message)
             Result.retry()
+        }
+    }
+
+    private suspend fun refreshHosts() {
+        try {
+            val store = BlocklistStore.get(applicationContext)
+            val summary = store.refreshAll(force = false)
+            Log.i(TAG, "Host refresh: refreshed=" + summary.refreshed +
+                " failed=" + summary.failed +
+                " skipped=" + summary.skipped +
+                " totalHosts=" + summary.totalHosts)
+
+            if (summary.refreshed > 0) {
+                AdBlocker.get(applicationContext).reloadCustomRules()
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Host refresh failed: " + t.message)
+        }
+    }
+
+    private suspend fun refreshCosmetics() {
+        try {
+            val store = CosmeticStore.get(applicationContext)
+            val refreshed = store.refreshAll(force = false)
+            Log.i(TAG, "Cosmetic refresh: updated=" + refreshed)
+
+            if (refreshed > 0) {
+                val raw = store.loadAllRaw()
+                if (raw.isNotEmpty()) CosmeticFilter.updateFrom(raw)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Cosmetic refresh failed: " + t.message)
         }
     }
 
@@ -65,8 +82,8 @@ class BlocklistRefreshWorker(
 
         /**
          * Enqueue the periodic refresh job. Safe to call on every app
-         * start: KEEP policy means an already-scheduled job is left
-         * alone, so we don't reset the next-run timer on every launch.
+         * start: KEEP policy leaves an already-scheduled job alone, so
+         * we do not reset the next-run timer on every launch.
          */
         fun schedule(context: Context) {
             val constraints = Constraints.Builder()
