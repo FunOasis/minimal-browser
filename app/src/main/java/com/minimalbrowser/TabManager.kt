@@ -404,15 +404,16 @@ class TabManager(
             ui = ui
         )
         wv.webChromeClient = TabWebChromeClient(tab)
-
-        wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
-            DownloadHandler.handle(
-                activity = activity,
-                url = url,
-                userAgent = userAgent,
-                contentDisposition = contentDisposition,
-                mimeType = mimeType,
-                contentLength = contentLength
+        
+        wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->    
+            DownloadHandler.handle(        
+                activity = activity,        
+                webView = wv,        
+                url = url,        
+                userAgent = userAgent,        
+                contentDisposition = contentDisposition,        
+                mimeType = mimeType,        
+                contentLength = contentLength    
             )
         }
 
