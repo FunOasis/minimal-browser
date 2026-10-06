@@ -29,9 +29,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.minimalbrowser.databinding.ActivityMainBinding
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -89,7 +89,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         )
 
         binding.swipeRefresh.setOnRefreshListener { tabManager.reloadActive() }
-        binding.swipeRefresh.setOnChildScrollUpCallback { _, _ ->    
+        binding.swipeRefresh.setOnChildScrollUpCallback { _, _ ->
             tabManager.canActiveScrollUp()
         }
 
@@ -146,8 +146,25 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             }
         })
 
+        // Tab set restore priority:
+        //   1. If we have saved state, rebuild the tab set from saved URLs.
+        //      A shortcut URL arriving on top of restored tabs loads in the
+        //      active tab rather than creating a new one, so the restored
+        //      layout is not disturbed.
+        //   2. Else if a shortcut URL is present in the intent, start with
+        //      one tab at that URL.
+        //   3. Else start with a single home tab.
+        val savedUrls = savedInstanceState?.getStringArrayList(KEY_TAB_URLS)
+        val savedActive = savedInstanceState?.getInt(KEY_ACTIVE_TAB, 0) ?: 0
         val shortcutUrl = intent?.getStringExtra(EXTRA_SHORTCUT_URL)
-        if (!shortcutUrl.isNullOrBlank()) {
+
+        if (!savedUrls.isNullOrEmpty()) {
+            tabManager.restore(savedUrls, savedActive)
+            if (!shortcutUrl.isNullOrBlank()) {
+                intent.removeExtra(EXTRA_SHORTCUT_URL)
+                tabManager.getActiveWebView()?.loadUrl(shortcutUrl)
+            }
+        } else if (!shortcutUrl.isNullOrBlank()) {
             intent.removeExtra(EXTRA_SHORTCUT_URL)
             tabManager.create(url = shortcutUrl)
         } else {
@@ -166,6 +183,29 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
                 active.loadUrl(url)
                 setAddressBarText(displayUrl(url))
             }
+        }
+    }
+
+    /**
+     * Persist enough tab state to rebuild the session if the OS kills
+     * the process while we are backgrounded. We deliberately do not use
+     * WebView.saveState() -- it is heavy and unreliable across WebView
+     * versions. Saving URLs and the active index is enough: on restore,
+     * only the active tab is loaded immediately; the rest stay dormant
+     * until tapped.
+     *
+     * Note: rotation does not hit this path because the manifest lists
+     * orientation|screenSize|keyboardHidden in configChanges. This only
+     * fires on actual process death, which is exactly when we want it.
+     */
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        val tabs = tabManager.tabs
+        if (tabs.isNotEmpty()) {
+            val urls = ArrayList<String>(tabs.size)
+            for (t in tabs) urls.add(t.url)
+            outState.putStringArrayList(KEY_TAB_URLS, urls)
+            outState.putInt(KEY_ACTIVE_TAB, tabManager.getActiveIndex())
         }
     }
 
@@ -570,8 +610,14 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             .show()
     }
 
+    /**
+     * Fetch newly added lists on the activity's lifecycle scope, not a
+     * bare CoroutineScope. If the user rotates or leaves the dialog
+     * mid-fetch, the coroutine is cancelled with the activity and the
+     * withContext(Main) block never runs against a destroyed context.
+     */
     private fun fetchNewLists(store: BlocklistStore, urls: List<String>) {
-        CoroutineScope(Dispatchers.IO).launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             var ok = 0
             var failed = 0
             for (u in urls) {
@@ -735,5 +781,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     companion object {
         const val EXTRA_SHORTCUT_URL = "com.minimalbrowser.EXTRA_SHORTCUT_URL"
         private const val MAX_VISIBLE_SUGGESTIONS = 6
+        private const val KEY_TAB_URLS = "mb_tab_urls"
+        private const val KEY_ACTIVE_TAB = "mb_active_tab"
     }
 }
