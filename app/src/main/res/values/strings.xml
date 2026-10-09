@@ -96,6 +96,14 @@
     <string name="downloads_file_missing">File is no longer available</string>
     <string name="downloads_no_app">No app can open this file</string>
     <string name="menu_disable_site_blocking">Disable blocking on this site</string>
+    <string name="menu_desktop_site">Desktop site</string>
+    <string name="menu_mobile_site">Mobile site</string>
+    <string name="desktop_on_toast">Desktop site for %1$s</string>
+    <string name="desktop_off_toast">Mobile site for %1$s</string>
+    <string name="link_option_copy">Copy link</string>
+    <string name="link_option_new_tab">Open in new tab</string>
+    <string name="link_option_background_tab">Open in background</string>
+    <string name="link_copied">Link copied</string>
     <string name="menu_enable_site_blocking">Enable blocking on this site</string>
     <string name="blocking_disabled_toast">Blocking off for %1$s</string>
     <string name="blocking_enabled_toast">Blocking on for %1$s</string>
