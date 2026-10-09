@@ -38,13 +38,14 @@ class AdBlocker private constructor(
         )
     }
 
-    // Stage 6: the trie is gone. hostSet is a flat sorted LongArray of
-    // FNV-1a hashes over reversed hostnames. ~1.2 MB for 150k hosts
-    // instead of ~35 MB for the equivalent trie. Same matching semantics.
+    // Stage 6: flat sorted LongArray of FNV-1a hashes over reversed
+    // hostnames. ~1.2 MB for 150k hosts vs ~35 MB for the trie.
     @Volatile private var hostSet: HostSet = HostSet.EMPTY
     @Volatile private var urlPatterns: Set<String> = emptySet()
+    @Volatile private var exceptionPatterns: Set<String> = emptySet()
     @Volatile private var hostCount: Int = 0
     @Volatile private var basePatterns: Set<String> = emptySet()
+    @Volatile private var baseExceptions: Set<String> = emptySet()
 
     @Volatile private var blocklistStore: BlocklistStore? = null
     @Volatile private var prefs: Prefs? = null
@@ -53,7 +54,7 @@ class AdBlocker private constructor(
 
     init {
         if (preloadedHosts.isNotEmpty() || preloadedPatterns.isNotEmpty()) {
-            applyRules(preloadedHosts, preloadedPatterns)
+            applyRules(preloadedHosts, preloadedPatterns, emptySet())
         }
 
         val ctx = context
@@ -74,6 +75,7 @@ class AdBlocker private constructor(
     private fun loadBasePatterns(ctx: Context) {
         val filterText = readAssetText(ctx, "filters.txt")
         basePatterns = parsePatterns(filterText)
+        baseExceptions = parseExceptions(filterText)
     }
 
     private suspend fun seedDefaultsIfNeeded() {
@@ -105,6 +107,7 @@ class AdBlocker private constructor(
 
         val customHosts = parseHosts(p.customBlocklist)
         val customPatterns = parsePatterns(p.customFilters)
+        val customExceptions = parseExceptions(p.customFilters)
 
         val mergedHosts = HashSet<String>(subHosts.size + customHosts.size)
         mergedHosts.addAll(subHosts)
@@ -112,8 +115,10 @@ class AdBlocker private constructor(
 
         val mergedPatterns =
             if (customPatterns.isEmpty()) basePatterns else basePatterns + customPatterns
+        val mergedExceptions =
+            if (customExceptions.isEmpty()) baseExceptions else baseExceptions + customExceptions
 
-        applyRules(mergedHosts, mergedPatterns)
+        applyRules(mergedHosts, mergedPatterns, mergedExceptions)
         Log.i(TAG, "Rules applied: " + stats().toString())
     }
 
@@ -136,10 +141,24 @@ class AdBlocker private constructor(
         }
     }
 
+    /**
+     * Called by MainActivity after the user toggles a per-site
+     * whitelist entry, so the decision cache does not serve a stale
+     * result for the site the user just changed.
+     */
+    fun invalidateCache() {
+        decisionCache.evictAll()
+    }
+
     @Synchronized
-    private fun applyRules(hosts: Set<String>, patterns: Set<String>) {
+    private fun applyRules(
+        hosts: Set<String>,
+        patterns: Set<String>,
+        exceptions: Set<String>
+    ) {
         hostSet = HostSet.from(hosts)
         urlPatterns = patterns
+        exceptionPatterns = exceptions
         hostCount = hosts.size
         decisionCache.evictAll()
     }
@@ -170,27 +189,72 @@ class AdBlocker private constructor(
         return out
     }
 
+    /**
+     * Regular URL substring patterns. Lines beginning with @@ are
+     * skipped here and handled by parseExceptions().
+     */
     private fun parsePatterns(text: String): Set<String> {
         if (text.isEmpty()) return emptySet()
         val out = HashSet<String>(256)
         text.lineSequence().forEach { line ->
             val t = line.trim().lowercase()
             if (t.isEmpty() || t.startsWith('#') || t.startsWith('!')) return@forEach
+            if (t.startsWith("@@")) return@forEach
             out.add(t)
+        }
+        return out
+    }
+
+    /**
+     * Exception patterns: a request whose URL contains one of these
+     * substrings is allowed even if it would otherwise match a host or
+     * pattern rule.
+     *
+     * Supported syntax: "@@substring". For convenience, leading "||"
+     * or "|" and trailing "^" or "|" (ABP delimiters) are stripped so
+     * a line copied verbatim from an ABP list still works as a plain
+     * substring match against the lowercased URL.
+     */
+    private fun parseExceptions(text: String): Set<String> {
+        if (text.isEmpty()) return emptySet()
+        val out = HashSet<String>(32)
+        text.lineSequence().forEach { line ->
+            var t = line.trim().lowercase()
+            if (t.isEmpty() || t.startsWith('#') || t.startsWith('!')) return@forEach
+            if (!t.startsWith("@@")) return@forEach
+            t = t.substring(2).trim()
+            if (t.startsWith("||")) t = t.substring(2)
+            if (t.startsWith("|")) t = t.substring(1)
+            if (t.endsWith("^")) t = t.substring(0, t.length - 1)
+            if (t.endsWith("|")) t = t.substring(0, t.length - 1)
+            if (t.isNotEmpty()) out.add(t)
         }
         return out
     }
 
     fun isBlocked(url: String): Boolean {
         if (url.isBlank()) return false
+        val lower = url.lowercase()
+        val host = extractHost(lower)
+
+        // Per-site whitelist. Checked before the decision cache so that
+        // toggling the whitelist takes effect immediately.
+        val p = prefs
+        if (p != null && host != null && p.isHostDisabled(host)) return false
+
         decisionCache.get(url)?.let { return it }
-        val result = check(url.lowercase())
+        val result = check(lower, host)
         decisionCache.put(url, result)
         return result
     }
 
-    private fun check(lower: String): Boolean {
-        val host = extractHost(lower)
+    private fun check(lower: String, host: String?): Boolean {
+        // Exceptions first: an explicit allow wins over everything else.
+        if (exceptionPatterns.isNotEmpty()) {
+            for (p in exceptionPatterns) {
+                if (lower.contains(p)) return false
+            }
+        }
         if (host != null && hostSet.matches(host)) return true
         for (p in urlPatterns) {
             if (lower.contains(p)) return true
