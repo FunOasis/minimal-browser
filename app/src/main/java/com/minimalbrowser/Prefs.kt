@@ -6,8 +6,9 @@ import android.content.SharedPreferences
 /**
  * User-editable preferences. The warehouse owns subscription lists, so
  * this class is intentionally small: homepage, the global JavaScript
- * default, the two free-form filter text fields, and the per-site
- * blocking whitelist.
+ * default, the two free-form filter text fields, the per-site blocking
+ * whitelist, the per-site desktop-mode list, and the URL tracking
+ * parameter strip list.
  */
 class Prefs private constructor(context: Context) {
 
@@ -31,9 +32,7 @@ class Prefs private constructor(context: Context) {
         set(v) = sp.edit().putString(KEY_CUSTOM_FILTERS, v).apply()
 
     /**
-     * Hosts (and their subdomains) on which ad blocking is disabled.
-     * Stored as a newline-separated blob. A disabled host applies to
-     * itself and any subdomain, matching how users think of "this site".
+     * Hosts (and subdomains) on which ad blocking is disabled.
      */
     var disabledHosts: Set<String>
         get() {
@@ -52,20 +51,86 @@ class Prefs private constructor(context: Context) {
         }
 
     /**
-     * True if the given host, or any parent domain of it, has blocking
-     * disabled. Called from AdBlocker.isBlocked() and the cosmetic
-     * filter gate. Suffix matching is on dot boundaries, so a user who
-     * disabled "example.com" also disables "ads.example.com", but a
-     * user who disabled "ads.example.com" leaves "example.com" alone.
+     * Hosts (and subdomains) that should load with a desktop UA.
      */
-    fun isHostDisabled(host: String): Boolean {
-        val h = host.lowercase().removePrefix("www.")
-        if (h.isEmpty()) return false
-        val set = disabledHosts
-        if (set.isEmpty()) return false
+    var desktopHosts: Set<String>
+        get() {
+            val blob = sp.getString(KEY_DESKTOP_HOSTS, "") ?: return emptySet()
+            if (blob.isBlank()) return emptySet()
+            return blob.lineSequence()
+                .map { it.trim().lowercase() }
+                .filter { it.isNotEmpty() }
+                .toSet()
+        }
+        set(v) {
+            val cleaned = v.map { it.trim().lowercase() }
+                .filter { it.isNotEmpty() }
+                .toSortedSet()
+            sp.edit().putString(KEY_DESKTOP_HOSTS, cleaned.joinToString("\n")).apply()
+        }
+
+    /**
+     * Tracking parameters to strip from main-frame navigations. On the
+     * very first access (key never written) returns the default list.
+     * Once the user saves an empty set, they get an empty set.
+     */
+    var removeParams: Set<String>
+        get() {
+            if (!sp.contains(KEY_REMOVE_PARAMS)) return UrlCleaner.DEFAULT_REMOVE_PARAMS
+            val blob = sp.getString(KEY_REMOVE_PARAMS, "") ?: return UrlCleaner.DEFAULT_REMOVE_PARAMS
+            if (blob.isBlank()) return emptySet()
+            return blob.lineSequence()
+                .map { it.trim().lowercase() }
+                .filter { it.isNotEmpty() }
+                .toSet()
+        }
+        set(v) {
+            val cleaned = v.map { it.trim().lowercase() }
+                .filter { it.isNotEmpty() }
+                .toSortedSet()
+            sp.edit().putString(KEY_REMOVE_PARAMS, cleaned.joinToString("\n")).apply()
+        }
+
+    // ------------------------------------------------------------------
+    // Host-list helpers
+    // ------------------------------------------------------------------
+
+    fun isHostDisabled(host: String): Boolean = hostInList(host, disabledHosts)
+
+    fun addDisabledHost(host: String) {
+        val h = normalize(host)
+        if (h.isNotEmpty()) disabledHosts = disabledHosts + h
+    }
+
+    fun removeDisabledHostsMatching(host: String) {
+        val h = normalize(host)
+        if (h.isEmpty()) return
+        disabledHosts = disabledHosts.filterNot { d ->
+            h == d || h.endsWith("." + d)
+        }.toSet()
+    }
+
+    fun isDesktopHost(host: String): Boolean = hostInList(host, desktopHosts)
+
+    fun addDesktopHost(host: String) {
+        val h = normalize(host)
+        if (h.isNotEmpty()) desktopHosts = desktopHosts + h
+    }
+
+    fun removeDesktopHostMatching(host: String) {
+        val h = normalize(host)
+        if (h.isEmpty()) return
+        desktopHosts = desktopHosts.filterNot { d ->
+            h == d || h.endsWith("." + d)
+        }.toSet()
+    }
+
+    private fun hostInList(host: String, list: Set<String>): Boolean {
+        val h = normalize(host)
+        if (h.isEmpty() || list.isEmpty()) return false
         var cur = h
         while (true) {
-            if (cur in set) return true
+            if (cur in list) return true
             val dot = cur.indexOf('.')
             if (dot < 0) break
             cur = cur.substring(dot + 1)
@@ -74,24 +139,8 @@ class Prefs private constructor(context: Context) {
         return false
     }
 
-    fun addDisabledHost(host: String) {
-        val h = host.lowercase().removePrefix("www.").trim()
-        if (h.isEmpty()) return
-        disabledHosts = disabledHosts + h
-    }
-
-    /**
-     * Remove any disabled-host entry that would currently whitelist the
-     * given host. "Remove entry for foo.example.com" also clears a
-     * pre-existing "example.com" entry if that is what was matching.
-     */
-    fun removeDisabledHostsMatching(host: String) {
-        val h = host.lowercase().removePrefix("www.").trim()
-        if (h.isEmpty()) return
-        disabledHosts = disabledHosts.filterNot { d ->
-            h == d || h.endsWith("." + d)
-        }.toSet()
-    }
+    private fun normalize(host: String): String =
+        host.lowercase().removePrefix("www.").trim()
 
     companion object {
         private const val KEY_HOMEPAGE = "homepage"
@@ -99,6 +148,8 @@ class Prefs private constructor(context: Context) {
         private const val KEY_CUSTOM_BLOCKLIST = "custom_blocklist"
         private const val KEY_CUSTOM_FILTERS = "custom_filters"
         private const val KEY_DISABLED_HOSTS = "disabled_hosts"
+        private const val KEY_DESKTOP_HOSTS = "desktop_hosts"
+        private const val KEY_REMOVE_PARAMS = "remove_params"
 
         const val HOME_URL = "minimal://home"
         const val DEFAULT_HOMEPAGE = HOME_URL
