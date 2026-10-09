@@ -40,19 +40,33 @@ object WebViewConfigurator {
         return ua
     }
 
-    /**
-     * Set the UA on a WebView for desktop or mobile. Idempotent: if the
-     * WebView already has the target UA, this is a no-op.
-     */
-    fun applyUserAgent(context: Context, webView: WebView, desktop: Boolean) {
-        val s = webView.settings
-        val target = if (desktop) DESKTOP_UA else mobileUserAgent(context)
-        if (target.isNotBlank() && s.userAgentString != target) {
-            s.userAgentString = target
-        }
+/**
+ * Set the UA on a WebView for desktop or mobile, and adjust the
+ * viewport handling to match.
+ *
+ * Desktop mode requires more than a UA change. Pages that ship a
+ * mobile viewport meta (<meta name="viewport" content="width=
+ * device-width">) will still lay out narrow and fire mobile CSS
+ * media queries even with a desktop UA. Turning useWideViewPort
+ * off makes the layout engine ignore that meta and fall back to
+ * its own wide default viewport (~980 CSS px), which is what
+ * triggers desktop CSS on responsive sites. This is roughly how
+ * Chrome's "Request desktop site" behaves.
+ */
+fun applyUserAgent(context: Context, webView: WebView, desktop: Boolean) {
+    val s = webView.settings
+    val target = if (desktop) DESKTOP_UA else mobileUserAgent(context)
+    if (target.isNotBlank() && s.userAgentString != target) {
+        s.userAgentString = target
+    }
+    if (desktop) {
+        s.useWideViewPort = false
+        s.loadWithOverviewMode = true
+    } else {
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
     }
+}
 
     @SuppressLint("SetJavaScriptEnabled")
     fun apply(webView: WebView, javaScriptEnabled: Boolean) {
