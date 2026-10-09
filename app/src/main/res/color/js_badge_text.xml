@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- state_selected = true -> JS is ON, dim text -->
+    <item
+        android:state_selected="true"
+        android:color="@color/text_tertiary" />
+
+    <!-- default -> JS is OFF, alert red text -->
+    <item android:color="@color/js_badge_off" />
+
+</selector>
