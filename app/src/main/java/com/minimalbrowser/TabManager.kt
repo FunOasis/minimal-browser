@@ -10,6 +10,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import java.net.URI
 
 class TabManager(
     private val activity: MainActivity,
@@ -21,7 +22,8 @@ class TabManager(
     private val onFavicon: (Bitmap?) -> Unit,
     private val onTabsChanged: () -> Unit,
     private val onFullscreenShow: (View, WebChromeClient.CustomViewCallback) -> Unit,
-    private val onFullscreenHide: () -> Unit
+    private val onFullscreenHide: () -> Unit,
+    private val onLongPressLink: (String) -> Unit
 ) {
 
     companion object {
@@ -42,12 +44,6 @@ class TabManager(
         var hasLoadedOnce: Boolean = false
         var frozen: Boolean = false
         var javaScriptEnabled: Boolean = true
-
-        /**
-         * The WebViewClient bound to this tab's WebView. Held here so
-         * the UI can read per-tab counters (currently the blocked-count
-         * for the ad-block badge) without going through the WebView.
-         */
         var client: BlockingWebViewClient? = null
 
         @Volatile var lastScrollY: Int = 0
@@ -70,12 +66,37 @@ class TabManager(
 
     fun isInFullscreen(): Boolean = fullscreenActive
 
-    /**
-     * Number of subresource requests blocked on the active tab's
-     * current page. Reset on every main-frame navigation. Zero for
-     * frozen tabs and any tab that has never loaded.
-     */
     fun getActiveBlockedCount(): Int = getActive()?.client?.blockedCount ?: 0
+
+    // ------------------------------------------------------------------
+    // Navigation helpers
+    // ------------------------------------------------------------------
+
+    /**
+     * Load a URL into the active tab, applying per-host desktop mode
+     * and stripping tracking parameters. The single entry point for
+     * every programmatic navigation from the app UI (address bar,
+     * suggestions, shortcuts, home button).
+     */
+    fun loadActive(url: String) {
+        val wv = getActiveWebView() ?: return
+        applyUaForUrl(wv, url)
+        val cleaned = UrlCleaner.clean(url, prefs.removeParams)
+        wv.loadUrl(cleaned)
+    }
+
+    /**
+     * Set the WebView's UA based on the target URL's host. No-op for
+     * non-http(s) URLs (internal pages, about:, data:).
+     */
+    private fun applyUaForUrl(wv: WebView, url: String) {
+        val lower = url.lowercase()
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) return
+        val host = try { URI(url).host?.lowercase()?.removePrefix("www.") }
+                   catch (_: Exception) { null } ?: return
+        val desktop = prefs.isDesktopHost(host)
+        WebViewConfigurator.applyUserAgent(activity, wv, desktop)
+    }
 
     // ------------------------------------------------------------------
     // Per-tab JavaScript
@@ -119,7 +140,9 @@ class TabManager(
             ui.onUrlChanged(wv, url)
             ui.onNavStateChanged(wv, false, false)
             onFavicon(tab.favicon)
-            wv.loadUrl(url)
+            applyUaForUrl(wv, url)
+            val cleaned = UrlCleaner.clean(url, prefs.removeParams)
+            wv.loadUrl(cleaned)
             tab.hasLoadedOnce = true
         } else {
             wv.visibility = View.GONE
@@ -192,7 +215,9 @@ class TabManager(
 
         val wv = tab.webView
         if (wv != null && !tab.hasLoadedOnce && tab.url.isNotBlank()) {
-            wv.loadUrl(tab.url)
+            applyUaForUrl(wv, tab.url)
+            val cleaned = UrlCleaner.clean(tab.url, prefs.removeParams)
+            wv.loadUrl(cleaned)
             tab.hasLoadedOnce = true
         }
 
@@ -339,7 +364,9 @@ class TabManager(
         container.addView(wv)
 
         tab.frozen = false
-        wv.loadUrl(url)
+        applyUaForUrl(wv, url)
+        val cleaned = UrlCleaner.clean(url, prefs.removeParams)
+        wv.loadUrl(cleaned)
         tab.hasLoadedOnce = true
 
         Log.i(TAG, "Unfroze tab " + index + " -> " + url)
@@ -408,6 +435,24 @@ class TabManager(
                 mimeType = mimeType,
                 contentLength = contentLength
             )
+        }
+
+        // Long-press on a link -> host shows a small action menu.
+        // Returning true here consumes the event; returning false lets
+        // the default long-press behaviour (text selection, etc.) run.
+        wv.setOnLongClickListener { v ->
+            val w = v as? WebView ?: return@setOnLongClickListener false
+            val hit = w.hitTestResult
+            when (hit.type) {
+                WebView.HitTestResult.SRC_ANCHOR_TYPE -> {
+                    val extra = hit.extra
+                    if (!extra.isNullOrBlank()) {
+                        onLongPressLink(extra)
+                        return@setOnLongClickListener true
+                    }
+                }
+            }
+            false
         }
 
         return wv
