@@ -27,4 +27,6 @@
     <color name="ic_launcher_background">#000000</color>
 
     <color name="footer_text">#5C5C5C</color>
+
+    <color name="js_badge_off">#FF6B6B</color>
 </resources>
