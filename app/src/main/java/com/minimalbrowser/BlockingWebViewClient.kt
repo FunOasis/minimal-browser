@@ -16,6 +16,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import java.io.ByteArrayInputStream
+import java.net.URI
 
 interface BrowserUiListener {
     fun onUrlChanged(view: WebView, url: String)
@@ -67,6 +68,20 @@ class BlockingWebViewClient(
         )
     }
 
+    /**
+     * Count of subresource requests blocked on the current top-level
+     * navigation. Reset in onPageStarted for each main-frame load.
+     * Read by MainActivity via TabManager for the badge display.
+     *
+     * Written from the WebView IO thread only (shouldInterceptRequest),
+     * read from the UI thread; @Volatile suffices.
+     */
+    @Volatile
+    var blockedCount: Int = 0
+        private set
+
+    private val prefs: Prefs by lazy { Prefs.get(appContext) }
+
     override fun shouldInterceptRequest(
         view: WebView,
         request: WebResourceRequest
@@ -74,7 +89,11 @@ class BlockingWebViewClient(
         val url = request.url.toString()
         if (request.isForMainFrame && url.startsWith(HOME_URL)) return serveHomePage()
         if (request.isForMainFrame) return null
-        return if (blocker.isBlocked(url)) blockedResponse() else null
+        if (blocker.isBlocked(url)) {
+            blockedCount = blockedCount + 1
+            return blockedResponse()
+        }
+        return null
     }
 
     override fun shouldOverrideUrlLoading(
@@ -101,10 +120,6 @@ class BlockingWebViewClient(
     }
 
     private fun isDownloadUrl(uri: Uri): Boolean {
-        // GitHub / GitLab / Bitbucket web viewer URLs end in real file
-        // extensions but are HTML pages, not downloads. Let them load
-        // normally. Real raw URLs use /raw/ or raw.githubusercontent.com
-        // and are unaffected.
         val host = uri.host?.lowercase()
         if (host == "github.com" || host == "www.github.com") {
             val path = uri.path.orEmpty()
@@ -164,10 +179,9 @@ class BlockingWebViewClient(
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
         if (view == null) return
-        // Install the blob-capture hook before any page script runs.
-        // GitHub (and most other sites) create their download blobs via
-        // URL.createObjectURL and immediately revoke them -- if we miss
-        // the synchronous capture window we cannot read the bytes later.
+        // Reset the blocked-request counter on each new main-frame load,
+        // so the badge reflects the current page only.
+        blockedCount = 0
         BlobDownloadHelper.injectCapture(view, url)
         ui.onPageLoadStarted(view)
         if (url != null) ui.onUrlChanged(view, url)
@@ -177,15 +191,24 @@ class BlockingWebViewClient(
     override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)
         if (view == null) return
-        // Idempotent safety net: some SPA navigations never fire
-        // onPageStarted for the new document. The script itself checks
-        // a window marker, so a second call is free.
         BlobDownloadHelper.injectCapture(view, url)
-        CosmeticFilter.apply(view, url)
+        // Skip cosmetic filtering entirely when the user has whitelisted
+        // this host. Network-layer blocking is already skipped by
+        // AdBlocker.isBlocked() for the same host.
+        if (!isHostDisabled(url)) {
+            CosmeticFilter.apply(view, url)
+        }
         PageScrollProbe.install(view, url)
         ui.onPageLoadFinished(view)
         if (url != null) ui.onUrlChanged(view, url)
         ui.onNavStateChanged(view, view.canGoBack(), view.canGoForward())
+    }
+
+    private fun isHostDisabled(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        val host = try { URI(url).host?.lowercase() } catch (_: Exception) { null }
+            ?: return false
+        return prefs.isHostDisabled(host)
     }
 
     override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
