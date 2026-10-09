@@ -41,14 +41,14 @@ class TabManager(
         var lastUsedAt: Long = System.currentTimeMillis()
         var hasLoadedOnce: Boolean = false
         var frozen: Boolean = false
+        var javaScriptEnabled: Boolean = true
 
         /**
-         * Per-tab JavaScript state. Seeded when the tab is created
-         * (inherits the active tab's state, or the Prefs default if
-         * there is no active tab). Changing this and reloading affects
-         * only this tab.
+         * The WebViewClient bound to this tab's WebView. Held here so
+         * the UI can read per-tab counters (currently the blocked-count
+         * for the ad-block badge) without going through the WebView.
          */
-        var javaScriptEnabled: Boolean = true
+        var client: BlockingWebViewClient? = null
 
         @Volatile var lastScrollY: Int = 0
 
@@ -70,22 +70,20 @@ class TabManager(
 
     fun isInFullscreen(): Boolean = fullscreenActive
 
+    /**
+     * Number of subresource requests blocked on the active tab's
+     * current page. Reset on every main-frame navigation. Zero for
+     * frozen tabs and any tab that has never loaded.
+     */
+    fun getActiveBlockedCount(): Int = getActive()?.client?.blockedCount ?: 0
+
     // ------------------------------------------------------------------
     // Per-tab JavaScript
     // ------------------------------------------------------------------
 
-    /**
-     * True if the active tab has JavaScript enabled. Falls back to the
-     * Prefs default when there is no active tab yet.
-     */
     fun isActiveJsEnabled(): Boolean =
         getActive()?.javaScriptEnabled ?: prefs.javaScriptEnabled
 
-    /**
-     * Toggle JavaScript for the active tab only. Applies the new
-     * setting directly to the WebView and reloads it. Returns the new
-     * state (true = on). No-op when there is no active tab.
-     */
     fun toggleActiveJavaScript(): Boolean {
         val tab = getActive() ?: return prefs.javaScriptEnabled
         tab.javaScriptEnabled = !tab.javaScriptEnabled
@@ -103,9 +101,6 @@ class TabManager(
     fun create(url: String = Prefs.HOME_URL, makeActive: Boolean = true): Tab {
         evictForSpace()
 
-        // New tabs inherit the JS state of the tab that is active at
-        // creation time. If there is no active tab (fresh start, or a
-        // restore in progress), fall back to the Prefs default.
         val inheritJs = getActive()?.javaScriptEnabled ?: prefs.javaScriptEnabled
 
         val tab = Tab(nextId++).apply {
@@ -264,6 +259,7 @@ class TabManager(
             tab.webView?.let { destroyWebView(it) }
             tab.webView = null
             tab.frozen = false
+            tab.client = null
         }
         _tabs.clear()
     }
@@ -292,6 +288,7 @@ class TabManager(
         tab.webView?.url?.let { live -> if (live.isNotBlank()) tab.url = live }
         tab.webView?.let { destroyWebView(it) }
         tab.webView = null
+        tab.client = null
     }
 
     private fun releaseFullscreenIfActive(index: Int) {
@@ -323,6 +320,7 @@ class TabManager(
         destroyWebView(wv)
 
         tab.webView = null
+        tab.client = null
         tab.frozen = true
         tab.hasLoadedOnce = false
         tab.lastScrollY = 0
@@ -385,19 +383,19 @@ class TabManager(
         wv.addJavascriptInterface(tab.scrollBridge, PageScrollProbe.JS_INTERFACE_NAME)
         BlobDownloadHelper.install(wv)
 
-        // Read JS state from the tab, not from the global Prefs. This
-        // is what makes the toggle per-tab.
         WebViewConfigurator.apply(wv, tab.javaScriptEnabled)
 
         runCatching {
             wv.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, true)
         }
 
-        wv.webViewClient = BlockingWebViewClient(
+        val client = BlockingWebViewClient(
             blocker = blocker,
             appContext = activity.applicationContext,
             ui = ui
         )
+        tab.client = client
+        wv.webViewClient = client
         wv.webChromeClient = TabWebChromeClient(tab)
 
         wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
