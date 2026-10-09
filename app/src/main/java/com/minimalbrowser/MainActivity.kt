@@ -1,7 +1,10 @@
 package com.minimalbrowser
 
 import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentCallbacks2
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -120,7 +123,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             },
             onTabsChanged = { updateTabBadge() },
             onFullscreenShow = { view, callback -> enterFullscreen(view, callback) },
-            onFullscreenHide = { exitFullscreen() }
+            onFullscreenHide = { exitFullscreen() },
+            onLongPressLink = { url -> showLinkOptions(url) }
         )
 
         binding.swipeRefresh.setOnRefreshListener { tabManager.reloadActive() }
@@ -206,7 +210,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             tabManager.restore(restoreUrls, restoreActive)
             if (!shortcutUrl.isNullOrBlank()) {
                 intent.removeExtra(EXTRA_SHORTCUT_URL)
-                tabManager.getActiveWebView()?.loadUrl(shortcutUrl)
+                tabManager.loadActive(shortcutUrl)
             }
         } else if (!shortcutUrl.isNullOrBlank()) {
             intent.removeExtra(EXTRA_SHORTCUT_URL)
@@ -225,11 +229,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         val url = intent.getStringExtra(EXTRA_SHORTCUT_URL)
         intent.removeExtra(EXTRA_SHORTCUT_URL)
         if (!url.isNullOrBlank()) {
-            val active = tabManager.getActiveWebView()
-            if (active != null) {
-                active.loadUrl(url)
-                setAddressBarText(displayUrl(url))
-            }
+            tabManager.loadActive(url)
+            setAddressBarText(displayUrl(url))
         }
     }
 
@@ -389,6 +390,40 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     // -------------------------------------------------------------------------
+    // Long-press link
+    // -------------------------------------------------------------------------
+
+    private fun showLinkOptions(url: String) {
+        val title = if (url.length > 72) url.substring(0, 72) + "..." else url
+        val options = arrayOf(
+            getString(R.string.link_option_copy),
+            getString(R.string.link_option_new_tab),
+            getString(R.string.link_option_background_tab)
+        )
+        MaterialAlertDialogBuilder(this)
+            .setTitle(title)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> copyLinkToClipboard(url)
+                    1 -> tabManager.create(url = url, makeActive = true)
+                    2 -> tabManager.create(url = url, makeActive = false)
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun copyLinkToClipboard(url: String) {
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("url", url))
+            Toast.makeText(this, R.string.link_copied, Toast.LENGTH_SHORT).show()
+        } catch (t: Throwable) {
+            Toast.makeText(this, "Copy failed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Suggestions
     // -------------------------------------------------------------------------
 
@@ -474,10 +509,9 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             binding.addressBar.setSelection(binding.addressBar.text?.length ?: 0)
             binding.addressBar.clearFocus()
             dismissSuggestions()
-            val wv = tabManager.getActiveWebView() ?: return@setOnItemClickListener
             binding.progressBar.progress = 0
             binding.progressBar.visibility = View.VISIBLE
-            wv.loadUrl(entry.url)
+            tabManager.loadActive(entry.url)
         }
 
         val popup = PopupWindow(
@@ -523,8 +557,9 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         val tabsItem = popup.menu.findItem(R.id.action_tabs)
         tabsItem?.title = getString(R.string.menu_tabs, tabManager.count())
 
-        val blockItem = popup.menu.findItem(R.id.action_toggle_site_blocking)
         val host = currentHost()
+
+        val blockItem = popup.menu.findItem(R.id.action_toggle_site_blocking)
         if (blockItem != null) {
             if (host == null) {
                 blockItem.isEnabled = false
@@ -533,6 +568,18 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
                 blockItem.title = getString(R.string.menu_enable_site_blocking)
             } else {
                 blockItem.title = getString(R.string.menu_disable_site_blocking)
+            }
+        }
+
+        val desktopItem = popup.menu.findItem(R.id.action_toggle_desktop)
+        if (desktopItem != null) {
+            if (host == null) {
+                desktopItem.isEnabled = false
+                desktopItem.title = getString(R.string.menu_desktop_site)
+            } else if (prefs.isDesktopHost(host)) {
+                desktopItem.title = getString(R.string.menu_mobile_site)
+            } else {
+                desktopItem.title = getString(R.string.menu_desktop_site)
             }
         }
 
@@ -570,6 +617,11 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
         R.id.action_toggle_site_blocking -> {
             toggleSiteBlocking()
+            true
+        }
+
+        R.id.action_toggle_desktop -> {
+            toggleDesktopMode()
             true
         }
 
@@ -656,11 +708,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         ).show()
     }
 
-    /**
-     * Hostname of the active tab's current URL, lowercased and with
-     * "www." stripped. Null for internal pages, blank URLs, and any
-     * URL we cannot parse.
-     */
     private fun currentHost(): String? {
         val url = tabManager.getActiveWebView()?.url ?: return null
         if (url.startsWith("minimal://")) return null
@@ -690,6 +737,31 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             ).show()
         }
         blocker.invalidateCache()
+        wv.reload()
+    }
+
+    private fun toggleDesktopMode() {
+        val host = currentHost() ?: return
+        val wv = tabManager.getActiveWebView() ?: return
+        val nowDesktop: Boolean
+        if (prefs.isDesktopHost(host)) {
+            prefs.removeDesktopHostMatching(host)
+            nowDesktop = false
+            Toast.makeText(
+                this,
+                getString(R.string.desktop_off_toast, host),
+                Toast.LENGTH_SHORT
+            ).show()
+        } else {
+            prefs.addDesktopHost(host)
+            nowDesktop = true
+            Toast.makeText(
+                this,
+                getString(R.string.desktop_on_toast, host),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+        WebViewConfigurator.applyUserAgent(this, wv, nowDesktop)
         wv.reload()
     }
 
@@ -753,7 +825,12 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
         fun refreshStats() {
             val s = blocker.stats()
-            statsView.text = getString(R.string.custom_filters_stats, s.hosts, s.patterns)
+            statsView.text = getString(
+                R.string.custom_filters_stats,
+                s.hosts,
+                s.patterns,
+                CosmeticFilter.ruleCount()
+            )
         }
 
         fun refreshWarehouse() {
@@ -899,8 +976,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
         if (binding.addressBar.hasFocus() && !tabChanged) return
         setAddressBarText(displayUrl(url))
-
-        // Badge tracks the active tab's counter.
         updateBlockCountBadge()
     }
 
@@ -958,21 +1033,19 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     // -------------------------------------------------------------------------
 
     private fun loadHome() {
-        val wv = tabManager.getActiveWebView() ?: return
         setAddressBarText("")
-        wv.loadUrl(Prefs.HOME_URL)
+        tabManager.loadActive(Prefs.HOME_URL)
     }
 
     private fun displayUrl(url: String): String =
         if (url.startsWith("minimal://")) "" else url
 
     private fun navigate() {
-        val wv = tabManager.getActiveWebView() ?: return
         val input = binding.addressBar.text.toString().trim()
         if (input.isEmpty()) return
         binding.progressBar.progress = 0
         binding.progressBar.visibility = View.VISIBLE
-        wv.loadUrl(normalize(input))
+        tabManager.loadActive(normalize(input))
         binding.addressBar.clearFocus()
     }
 
