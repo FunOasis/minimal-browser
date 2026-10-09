@@ -5,11 +5,18 @@ package com.minimalbrowser
  *
  * Parsed from EasyList-format sources. Three kinds of rules:
  *
- *   generic:   ##.ad-banner         applied to every page
- *   domain:    example.com##.ad     applied only when the page host
- *                                   matches example.com or a subdomain
- *   exception: example.com#@#.ad    removes .ad from the set for
- *                                   example.com and its subdomains
+ *   generic:         ##.ad-banner           applied to every page
+ *   domain:          example.com##.ad       applied only when the page
+ *                                           host matches example.com or
+ *                                           a subdomain
+ *   negative:        ~example.com##.ad      applied everywhere EXCEPT
+ *                                           example.com and subdomains
+ *   exception:       example.com#@#.ad      removes .ad from the set for
+ *                                           example.com and subdomains
+ *
+ * Mixed positive/negative domains ("foo.com,~bar.com##sel") apply to
+ * foo.com except bar.com, implemented by adding sel to foo.com's
+ * include bucket and to bar.com's exception bucket.
  *
  * Procedural rules (#?#, #$#, #%#, :has(), :has-text(), :xpath(),
  * :-abp-*) are deliberately dropped. They need runtime DOM walks that
@@ -22,10 +29,6 @@ package com.minimalbrowser
  * resources, or unbalance brackets. A single malformed selector in a
  * comma-separated list invalidates the whole rule in a browser, so we
  * filter aggressively at parse time.
- *
- * The class is immutable. Rebuilding from a new subscription just
- * replaces the whole object behind a volatile reference in
- * CosmeticFilter, so readers never see a half-mutated rule set.
  */
 class CosmeticRules private constructor(
     private val generic: List<String>,
@@ -39,8 +42,7 @@ class CosmeticRules private constructor(
     /**
      * Return the concatenated, deduplicated selector list for a page
      * URL. Suffix-walks the host and unions every matching domain rule
-     * set, then subtracts any matching exception set. Cheap: no regex,
-     * no parsing, just hashing and set operations.
+     * set, then subtracts any matching exception set.
      */
     fun selectorsFor(url: String): List<String> {
         val host = hostOf(url) ?: return generic
@@ -66,10 +68,12 @@ class CosmeticRules private constructor(
          * Parse EasyList cosmetic lines into an immutable rule set.
          * Line format reference:
          *
-         *   ##selector                 -- global include
-         *   domain##selector           -- domain include
-         *   domain1,domain2##selector  -- multi-domain include
-         *   domain#@#selector          -- domain exception
+         *   ##selector                       -- global include
+         *   domain##selector                 -- domain include
+         *   domain1,domain2##selector        -- multi-domain include
+         *   ~domain##selector                -- global include except on domain
+         *   domain1,~domain2##selector       -- domain1 include except domain2
+         *   domain#@#selector                -- domain exception
          */
         fun parse(
             text: String,
@@ -93,18 +97,39 @@ class CosmeticRules private constructor(
                 if (selector.isEmpty()) return@forEach
                 if (!isSafeSelector(selector)) return@forEach
 
-                if (domainsPart.isEmpty()) {
-                    if (sep.isException) return@forEach
+                val tokens = parseDomainTokens(domainsPart)
+
+                if (sep.isException) {
+                    // Exception rules: only positive domains make sense.
+                    // A negative on an exception would mean "allow except
+                    // where we disallowed", which EasyList never uses.
+                    if (tokens.positives.isEmpty()) return@forEach
+                    for (h in tokens.positives) {
+                        val set = exByDomain.getOrPut(h) { LinkedHashSet() }
+                        if (set.size < perDomainCap) set.add(selector)
+                    }
+                    return@forEach
+                }
+
+                if (tokens.positives.isEmpty() && tokens.negatives.isEmpty()) {
+                    // No domain list: plain global rule.
                     if (generic.size < genericCap) generic.add(selector)
                     return@forEach
                 }
 
-                val hosts = parseDomains(domainsPart) ?: return@forEach
-                if (hosts.isEmpty()) return@forEach
+                if (tokens.positives.isEmpty()) {
+                    // Pure negation: apply globally, add exceptions for
+                    // each listed domain.
+                    if (generic.size < genericCap) generic.add(selector)
+                } else {
+                    for (h in tokens.positives) {
+                        val set = byDomain.getOrPut(h) { LinkedHashSet() }
+                        if (set.size < perDomainCap) set.add(selector)
+                    }
+                }
 
-                val bucket = if (sep.isException) exByDomain else byDomain
-                for (h in hosts) {
-                    val set = bucket.getOrPut(h) { LinkedHashSet() }
+                for (h in tokens.negatives) {
+                    val set = exByDomain.getOrPut(h) { LinkedHashSet() }
                     if (set.size < perDomainCap) set.add(selector)
                 }
             }
@@ -134,18 +159,16 @@ class CosmeticRules private constructor(
 
         private class Sep(val index: Int, val len: Int, val isException: Boolean)
 
+        private class DomainTokens(
+            val positives: List<String>,
+            val negatives: List<String>
+        )
+
         /**
          * Locate the rule separator on a line. Returns null if the line
          * is not a cosmetic rule, or uses an unsupported syntax.
-         *
-         * Unsupported forms are rejected early -- cheaper than matching
-         * every supported variant, and it keeps procedural rules from
-         * being silently mis-parsed as includes.
          */
         private fun findSeparator(line: String): Sep? {
-            // Reject the whole line if it uses an extended/snippet/style
-            // marker. These are AdGuard / ABP extensions we do not
-            // support and must not half-parse.
             if (line.contains("#?#"))  return null
             if (line.contains("#$#"))  return null
             if (line.contains("#%#"))  return null
@@ -179,19 +202,10 @@ class CosmeticRules private constructor(
             return if (found) Sep(bestIndex, bestLen, bestIsExc) else null
         }
 
-        /**
-         * Characters that cannot appear in a selector we generate CSS
-         * for. This is a defensive filter: a single bad entry would
-         * invalidate the entire comma-separated rule in the browser.
-         */
         private val FORBIDDEN = arrayOf(
-            // Could close the CSS declaration block we wrap the list in.
             "{", "}", ";", "/*", "*/",
-            // At-rules have no business inside a selector list.
             "@",
-            // Could break out of the JS bridge string in a hostile case.
             "`", "<", ">",
-            // Procedural / non-standard extensions.
             ":has(", ":has-text(", ":matches-", ":xpath(",
             ":-abp-", ":contains(", ":watch-attr(",
             ":remove(", ":style(", ":if(", ":if-not(",
@@ -203,7 +217,6 @@ class CosmeticRules private constructor(
             for (bad in FORBIDDEN) {
                 if (sel.contains(bad)) return false
             }
-            // Balanced brackets. A mismatch invalidates the CSS rule.
             var paren = 0
             var sq = 0
             var i = 0
@@ -221,21 +234,24 @@ class CosmeticRules private constructor(
         }
 
         /**
-         * Parse the domain list preceding the separator. Returns null
-         * if any entry uses negation (~) -- domain-level negation is
-         * not supported. Returns an empty list if the list is
-         * malformed.
+         * Split the domain list into positive and negative tokens.
+         * A leading "~" marks a negative. Tokens without a dot are
+         * ignored (matches the previous stricter behaviour).
          */
-        private fun parseDomains(s: String): List<String>? {
-            val out = ArrayList<String>(2)
+        private fun parseDomainTokens(s: String): DomainTokens {
+            if (s.isBlank()) return DomainTokens(emptyList(), emptyList())
+            val pos = ArrayList<String>(2)
+            val neg = ArrayList<String>(2)
             for (part in s.split(',')) {
-                val h = part.trim().lowercase()
+                var h = part.trim().lowercase().removePrefix("www.")
                 if (h.isEmpty()) continue
-                if (h.startsWith('~')) return null
+                val isNeg = h.startsWith('~')
+                if (isNeg) h = h.substring(1).trim()
+                if (h.isEmpty()) continue
                 if (!h.contains('.')) continue
-                out.add(h.removePrefix("www."))
+                if (isNeg) neg.add(h) else pos.add(h)
             }
-            return out
+            return DomainTokens(pos, neg)
         }
 
         private fun hostOf(url: String): String? = try {
@@ -247,7 +263,6 @@ class CosmeticRules private constructor(
         /**
          * Dot-boundary suffixes of a host, stopping before the bare
          * top-level label.
-         *   a.b.example.com -> [a.b.example.com, b.example.com, example.com]
          */
         private fun suffixesOf(host: String): List<String> {
             val out = ArrayList<String>(6)
