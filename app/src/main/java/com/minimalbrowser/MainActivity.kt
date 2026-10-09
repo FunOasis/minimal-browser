@@ -360,4 +360,657 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.topBar.visibility = View.VISIBLE
         binding.footerText.visibility = View.VISIBLE
         binding.swipeRefresh.visibility = View.VISIBLE
-        binding.webViewContainer.visibility =
+        binding.webViewContainer.visibility = View.VISIBLE
+
+        showSystemBars()
+    }
+
+    private fun requestExitFullscreen() {
+        val cb = fullscreenCallback ?: return
+        try {
+            cb.onCustomViewHidden()
+        } catch (_: Throwable) {
+            exitFullscreen()
+        }
+    }
+
+    private fun hideSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    private fun showSystemBars() {
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.show(WindowInsetsCompat.Type.systemBars())
+    }
+
+    // -------------------------------------------------------------------------
+    // Suggestions
+    // -------------------------------------------------------------------------
+
+    private fun maybeShowSuggestions(query: String) {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) {
+            dismissSuggestions()
+            return
+        }
+
+        val entries = history.loadAll()
+        val filtered = entries.asSequence()
+            .filter { e ->
+                e.url.lowercase().contains(q) ||
+                    e.title.lowercase().contains(q)
+            }
+            .take(MAX_VISIBLE_SUGGESTIONS)
+            .toList()
+
+        if (filtered.isEmpty()) {
+            dismissSuggestions()
+            return
+        }
+
+        currentSuggestions = filtered
+
+        val labels = filtered.map { e ->
+            if (e.title.isBlank()) e.url else e.title + "\n" + e.url
+        }
+
+        if (suggestionPopup == null) {
+            buildSuggestionsPopup()
+        }
+        suggestionAdapter?.clear()
+        suggestionAdapter?.addAll(labels)
+        suggestionAdapter?.notifyDataSetChanged()
+
+        val popup = suggestionPopup ?: return
+        if (popup.isShowing) {
+            popup.update(
+                binding.urlPill,
+                binding.urlPill.width,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        } else {
+            popup.width = binding.urlPill.width
+            popup.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            popup.showAsDropDown(binding.urlPill, 0, 4)
+        }
+    }
+
+    private fun buildSuggestionsPopup() {
+        val listView = ListView(this).apply {
+            divider = ColorDrawable(Color.parseColor("#1AFFFFFF"))
+            dividerHeight = 1
+            setBackgroundColor(Color.parseColor("#E60D0D0D"))
+            setPadding(0, 4, 0, 4)
+        }
+
+        val adapter = object : ArrayAdapter<String>(
+            this,
+            android.R.layout.simple_list_item_1,
+            ArrayList()
+        ) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getView(position, convertView, parent)
+                val tv = v.findViewById<TextView>(android.R.id.text1)
+                tv.setTextColor(Color.parseColor("#F5F5F5"))
+                tv.textSize = 14f
+                tv.setPadding(32, 24, 32, 24)
+                tv.maxLines = 2
+                tv.ellipsize = TextUtils.TruncateAt.END
+                return v
+            }
+        }
+
+        listView.adapter = adapter
+        listView.setOnItemClickListener { _, _, position, _ ->
+            val entry = currentSuggestions.getOrNull(position) ?: return@setOnItemClickListener
+            suppressSuggestionRefresh = true
+            binding.addressBar.setText(displayUrl(entry.url))
+            suppressSuggestionRefresh = false
+            binding.addressBar.setSelection(binding.addressBar.text?.length ?: 0)
+            binding.addressBar.clearFocus()
+            dismissSuggestions()
+            val wv = tabManager.getActiveWebView() ?: return@setOnItemClickListener
+            binding.progressBar.progress = 0
+            binding.progressBar.visibility = View.VISIBLE
+            wv.loadUrl(entry.url)
+        }
+
+        val popup = PopupWindow(
+            listView,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true
+        ).apply {
+            isOutsideTouchable = true
+            isFocusable = false
+            elevation = 12f
+            setBackgroundDrawable(ColorDrawable(Color.parseColor("#E60D0D0D")))
+            inputMethodMode = PopupWindow.INPUT_METHOD_NEEDED
+        }
+
+        suggestionPopup = popup
+        suggestionList = listView
+        suggestionAdapter = adapter
+    }
+
+    private fun dismissSuggestions() {
+        suggestionPopup?.dismiss()
+    }
+
+    private fun setAddressBarText(text: String) {
+        suppressSuggestionRefresh = true
+        binding.addressBar.setText(text)
+        suppressSuggestionRefresh = false
+    }
+
+    // -------------------------------------------------------------------------
+    // Menu / tabs / dialogs
+    // -------------------------------------------------------------------------
+
+    private fun showOverflowMenu(anchor: View) {
+        val themedContext = ContextThemeWrapper(
+            this,
+            R.style.ThemeOverlay_MinimalBrowser_PopupMenu
+        )
+        val popup = PopupMenu(themedContext, anchor)
+        popup.menuInflater.inflate(R.menu.browser_menu, popup.menu)
+
+        val tabsItem = popup.menu.findItem(R.id.action_tabs)
+        tabsItem?.title = getString(R.string.menu_tabs, tabManager.count())
+
+        val blockItem = popup.menu.findItem(R.id.action_toggle_site_blocking)
+        val host = currentHost()
+        if (blockItem != null) {
+            if (host == null) {
+                blockItem.isEnabled = false
+                blockItem.title = getString(R.string.menu_disable_site_blocking)
+            } else if (prefs.isHostDisabled(host)) {
+                blockItem.title = getString(R.string.menu_enable_site_blocking)
+            } else {
+                blockItem.title = getString(R.string.menu_disable_site_blocking)
+            }
+        }
+
+        popup.setOnMenuItemClickListener { item -> handleMenu(item) }
+        popup.show()
+    }
+
+    private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {
+        R.id.action_home -> { loadHome(); true }
+
+        R.id.action_new_tab -> {
+            tabManager.create()
+            true
+        }
+
+        R.id.action_tabs -> {
+            showTabSwitcher()
+            true
+        }
+
+        R.id.action_add_shortcut -> {
+            addCurrentPageShortcut()
+            true
+        }
+
+        R.id.action_js -> {
+            toggleActiveJavaScript()
+            true
+        }
+
+        R.id.action_custom_filters -> {
+            showCustomFiltersDialog()
+            true
+        }
+
+        R.id.action_toggle_site_blocking -> {
+            toggleSiteBlocking()
+            true
+        }
+
+        R.id.action_downloads -> {
+            startActivity(Intent(this, DownloadsActivity::class.java))
+            true
+        }
+
+        R.id.action_clear -> {
+            tabManager.tabs.forEach { tab ->
+                tab.webView?.clearHistory()
+                tab.webView?.clearCache(true)
+            }
+            Toast.makeText(this, "Cache cleared", Toast.LENGTH_SHORT).show()
+            true
+        }
+
+        R.id.action_exit -> {
+            exiting = true
+            SessionStore.clear(this)
+            finishAndRemoveTask()
+            true
+        }
+
+        else -> false
+    }
+
+    private fun showTabSwitcher() {
+        TabSwitcherSheet(
+            context = this,
+            tabManager = tabManager,
+            onVisibilityChanged = { visible ->
+                if (visible) {
+                    binding.footerText.visibility = View.VISIBLE
+                } else {
+                    val url = tabManager.getActiveWebView()?.url ?: ""
+                    updateFooterFor(url)
+                }
+            },
+            onLastTabCloseRequested = {
+                showExitConfirm()
+            }
+        ).show()
+    }
+
+    private fun updateTabBadge() {
+        val active = tabManager.getActiveIndex() + 1
+        val total = tabManager.count()
+        binding.tabBadge.text = active.toString() + "/" + total
+        updateJsBadge()
+        updateBlockCountBadge()
+    }
+
+    private fun updateJsBadge() {
+        binding.jsBadge.isSelected = tabManager.isActiveJsEnabled()
+    }
+
+    private fun toggleActiveJavaScript() {
+        val enabled = tabManager.toggleActiveJavaScript()
+        updateJsBadge()
+        Toast.makeText(
+            this,
+            "JavaScript: " + (if (enabled) "ON" else "OFF"),
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun updateBlockCountBadge() {
+        val count = tabManager.getActiveBlockedCount()
+        if (count <= 0) {
+            binding.blockCountBadge.visibility = View.GONE
+        } else {
+            binding.blockCountBadge.visibility = View.VISIBLE
+            binding.blockCountBadge.text = count.toString()
+        }
+    }
+
+    private fun showBlockedCountDetail() {
+        val count = tabManager.getActiveBlockedCount()
+        Toast.makeText(
+            this,
+            getString(R.string.blocked_count_toast, count),
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    /**
+     * Hostname of the active tab's current URL, lowercased and with
+     * "www." stripped. Null for internal pages, blank URLs, and any
+     * URL we cannot parse.
+     */
+    private fun currentHost(): String? {
+        val url = tabManager.getActiveWebView()?.url ?: return null
+        if (url.startsWith("minimal://")) return null
+        return try {
+            URI(url).host?.lowercase()?.removePrefix("www.")
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun toggleSiteBlocking() {
+        val host = currentHost() ?: return
+        val wv = tabManager.getActiveWebView() ?: return
+        if (prefs.isHostDisabled(host)) {
+            prefs.removeDisabledHostsMatching(host)
+            Toast.makeText(
+                this,
+                getString(R.string.blocking_enabled_toast, host),
+                Toast.LENGTH_SHORT
+            ).show()
+        } else {
+            prefs.addDisabledHost(host)
+            Toast.makeText(
+                this,
+                getString(R.string.blocking_disabled_toast, host),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+        blocker.invalidateCache()
+        wv.reload()
+    }
+
+    private fun updateFooterFor(url: String) {
+        binding.footerText.visibility =
+            if (url.startsWith(Prefs.HOME_URL)) View.VISIBLE else View.GONE
+    }
+
+    private fun showExitConfirm() {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.exit_title)
+            .setMessage(R.string.exit_message)
+            .setPositiveButton(R.string.exit_confirm) { _, _ ->
+                exiting = true
+                SessionStore.clear(this)
+                finishAndRemoveTask()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun addCurrentPageShortcut() {
+        val wv = tabManager.getActiveWebView() ?: return
+        val url = wv.url
+        if (url.isNullOrBlank() || url.startsWith("minimal://")) {
+            Toast.makeText(this, R.string.shortcut_needs_page, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val tab = tabManager.findByWebView(wv)
+        val result = ShortcutHelper.requestPin(
+            context = this,
+            url = url,
+            title = (tab?.title ?: wv.title).orEmpty(),
+            favicon = tab?.favicon
+        )
+        val msgRes = when (result) {
+            ShortcutHelper.Result.PINNED      -> R.string.shortcut_requested
+            ShortcutHelper.Result.UNSUPPORTED -> R.string.shortcut_unsupported
+            ShortcutHelper.Result.INVALID     -> R.string.shortcut_needs_page
+        }
+        Toast.makeText(this, msgRes, Toast.LENGTH_SHORT).show()
+    }
+
+    // -------------------------------------------------------------------------
+    // Ad blocking dialog
+    // -------------------------------------------------------------------------
+
+    private fun showCustomFiltersDialog() {
+        val store = BlocklistStore.get(this)
+        val view = layoutInflater.inflate(R.layout.dialog_custom_filters, null)
+
+        val editSubs            = view.findViewById<EditText>(R.id.editSubscriptions)
+        val warehouseContainer  = view.findViewById<LinearLayout>(R.id.warehouseContainer)
+        val warehouseEmptyText  = view.findViewById<TextView>(R.id.warehouseEmptyText)
+        val editBlocklist       = view.findViewById<EditText>(R.id.editBlocklist)
+        val editPatterns        = view.findViewById<EditText>(R.id.editPatterns)
+        val statsView           = view.findViewById<TextView>(R.id.customFilterStats)
+
+        editBlocklist.setText(prefs.customBlocklist)
+        editPatterns.setText(prefs.customFilters)
+
+        fun refreshStats() {
+            val s = blocker.stats()
+            statsView.text = getString(R.string.custom_filters_stats, s.hosts, s.patterns)
+        }
+
+        fun refreshWarehouse() {
+            val entries = store.listAll()
+            warehouseContainer.removeAllViews()
+            if (entries.isEmpty()) {
+                warehouseEmptyText.visibility = View.VISIBLE
+            } else {
+                warehouseEmptyText.visibility = View.GONE
+                for (e in entries) {
+                    val row = layoutInflater.inflate(
+                        R.layout.item_warehouse_list,
+                        warehouseContainer,
+                        false
+                    )
+                    val urlView = row.findViewById<TextView>(R.id.warehouseUrl)
+                    val metaView = row.findViewById<TextView>(R.id.warehouseMeta)
+                    val removeBtn = row.findViewById<ImageButton>(R.id.removeWarehouseList)
+
+                    urlView.text = e.url
+
+                    val hostLabel = e.hostCount.toString() + " hosts"
+                    val sizeLabel = humanSize(e.byteSize)
+                    val ageLabel = humanAge(e.lastFetched)
+                    val prefix = if (e.ok) "" else "FAILED - "
+                    metaView.text = prefix + hostLabel + " - " + sizeLabel + " - " + ageLabel
+
+                    removeBtn.setOnClickListener {
+                        store.remove(e.url)
+                        blocker.reloadCustomRules()
+                        refreshWarehouse()
+                        refreshStats()
+                    }
+
+                    warehouseContainer.addView(row)
+                }
+            }
+            refreshStats()
+        }
+
+        refreshWarehouse()
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.menu_custom_filters)
+            .setView(view)
+            .setPositiveButton(R.string.action_save) { _, _ ->
+                val rawSubs = editSubs.text.toString()
+                val newUrls = rawSubs.lineSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
+                    .toList()
+
+                prefs.customBlocklist = editBlocklist.text.toString()
+                prefs.customFilters = editPatterns.text.toString()
+
+                val existing = store.listAll().map { it.url }.toSet()
+                val toAdd = newUrls.filter { it !in existing }
+
+                if (toAdd.isEmpty()) {
+                    blocker.reloadCustomRules()
+                    Toast.makeText(
+                        this,
+                        R.string.custom_filters_saved,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        this,
+                        "Fetching " + toAdd.size + " new list(s)...",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    fetchNewLists(store, toAdd)
+                }
+            }
+            .setNeutralButton(R.string.action_clear) { _, _ ->
+                prefs.customBlocklist = ""
+                prefs.customFilters = ""
+                blocker.reloadCustomRules()
+                Toast.makeText(this, R.string.custom_filters_cleared, Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun fetchNewLists(store: BlocklistStore, urls: List<String>) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            var ok = 0
+            var failed = 0
+            for (u in urls) {
+                val result = store.addAndFetch(u)
+                if (result.ok) ok++ else failed++
+            }
+            withContext(Dispatchers.Main) {
+                blocker.reloadCustomRules()
+                val msg = if (failed == 0) {
+                    "Added " + ok + " list(s)"
+                } else {
+                    "Added " + ok + ", " + failed + " failed"
+                }
+                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun humanSize(bytes: Long): String {
+        return when {
+            bytes >= 1024L * 1024L -> (bytes / (1024L * 1024L)).toString() + " MB"
+            bytes >= 1024L         -> (bytes / 1024L).toString() + " KB"
+            else                    -> bytes.toString() + " B"
+        }
+    }
+
+    private fun humanAge(ms: Long): String {
+        if (ms <= 0L) return "never"
+        val diff = System.currentTimeMillis() - ms
+        if (diff < 0L) return "just now"
+        val mins = diff / 60_000L
+        if (mins < 1L) return "just now"
+        if (mins < 60L) return mins.toString() + "m ago"
+        val hours = mins / 60L
+        if (hours < 24L) return hours.toString() + "h ago"
+        val days = hours / 24L
+        return days.toString() + "d ago"
+    }
+
+    // -------------------------------------------------------------------------
+    // BrowserUiListener
+    // -------------------------------------------------------------------------
+
+    override fun onUrlChanged(view: WebView, url: String) {
+        if (view !== tabManager.getActiveWebView()) return
+        updateFooterFor(url)
+
+        if (url.startsWith(Prefs.HOME_URL)) {
+            tabManager.getActive()?.favicon = null
+            binding.favicon.setImageDrawable(null)
+            binding.favicon.visibility = View.GONE
+        }
+
+        val currentTabId = tabManager.getActive()?.id ?: -1L
+        val tabChanged = currentTabId != lastSeenTabId
+        lastSeenTabId = currentTabId
+
+        if (binding.addressBar.hasFocus() && !tabChanged) return
+        setAddressBarText(displayUrl(url))
+
+        // Badge tracks the active tab's counter.
+        updateBlockCountBadge()
+    }
+
+    override fun onNavStateChanged(view: WebView, canGoBack: Boolean, canGoForward: Boolean) {
+        if (view !== tabManager.getActiveWebView()) return
+        binding.btnForward.isEnabled = canGoForward
+    }
+
+    override fun onPageLoadStarted(view: WebView) {
+        if (view !== tabManager.getActiveWebView()) return
+        binding.progressBar.progress = 0
+        binding.progressBar.visibility = View.VISIBLE
+        updateBlockCountBadge()
+    }
+
+    override fun onPageLoadFinished(view: WebView) {
+        if (view !== tabManager.getActiveWebView()) return
+        binding.swipeRefresh.isRefreshing = false
+        val url = view.url ?: return
+        val title = view.title.orEmpty()
+        history.record(url, title)
+        updateBlockCountBadge()
+    }
+
+    override fun onPageLoadError(view: WebView?, description: String, url: String?) {
+        if (view != null && view !== tabManager.getActiveWebView()) return
+        binding.progressBar.visibility = View.GONE
+        binding.swipeRefresh.isRefreshing = false
+        binding.favicon.setImageDrawable(null)
+        binding.favicon.visibility = View.GONE
+        view?.loadDataWithBaseURL(
+            null, errorPageHtml(description, url), "text/html", "utf-8", null
+        )
+    }
+
+    override fun onRenderProcessGone(view: WebView) {
+        Toast.makeText(this, "Renderer crashed - restarting", Toast.LENGTH_SHORT).show()
+        recreate()
+    }
+
+    override fun onDownloadRequested(view: WebView, url: String) {
+        DownloadHandler.handle(
+            activity = this,
+            webView = view,
+            url = url,
+            userAgent = view.settings.userAgentString,
+            contentDisposition = null,
+            mimeType = null,
+            contentLength = -1L
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // Navigation helpers
+    // -------------------------------------------------------------------------
+
+    private fun loadHome() {
+        val wv = tabManager.getActiveWebView() ?: return
+        setAddressBarText("")
+        wv.loadUrl(Prefs.HOME_URL)
+    }
+
+    private fun displayUrl(url: String): String =
+        if (url.startsWith("minimal://")) "" else url
+
+    private fun navigate() {
+        val wv = tabManager.getActiveWebView() ?: return
+        val input = binding.addressBar.text.toString().trim()
+        if (input.isEmpty()) return
+        binding.progressBar.progress = 0
+        binding.progressBar.visibility = View.VISIBLE
+        wv.loadUrl(normalize(input))
+        binding.addressBar.clearFocus()
+    }
+
+    private fun normalize(input: String): String = when {
+        input.startsWith("http://") || input.startsWith("https://") -> input
+        input.contains(" ") || !input.contains(".") ->
+            "https://search.brave.com/search?q=" + URLEncoder.encode(input, "UTF-8")
+        else -> "https://" + input
+    }
+
+    private fun errorPageHtml(description: String, url: String?): String {
+        val safeDesc = description.replace("<", "&lt;").replace("&", "&amp;")
+        val safeUrl  = (url ?: "").replace("<", "&lt;").replace("&", "&amp;")
+        return "<!DOCTYPE html>" +
+            "<html><head>" +
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+            "<style>" +
+            "html, body { margin: 0; padding: 0; background: #0A0A0A; }" +
+            "body { font-family: -apple-system, system-ui, sans-serif; " +
+            "color: #FFFFFF; padding: 64px 24px; text-align: center; }" +
+            "h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }" +
+            "p  { font-size: 15px; color: #8A8A8A; margin: 0 0 4px; }" +
+            ".url { font-size: 12px; color: #666666; word-break: break-all; " +
+            "margin-top: 20px; }" +
+            "</style>" +
+            "</head><body>" +
+            "<h1>Can't open this page</h1>" +
+            "<p>" + safeDesc + "</p>" +
+            "<p class=\"url\">" + safeUrl + "</p>" +
+            "</body></html>"
+    }
+
+    companion object {
+        const val EXTRA_SHORTCUT_URL = "com.minimalbrowser.EXTRA_SHORTCUT_URL"
+        private const val MAX_VISIBLE_SUGGESTIONS = 6
+        private const val KEY_TAB_URLS = "mb_tab_urls"
+        private const val KEY_ACTIVE_TAB = "mb_active_tab"
+
+        private const val FREEZE_CHECK_INTERVAL_MS = 60_000L
+    }
+}
