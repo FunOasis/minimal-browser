@@ -16,9 +16,7 @@
           [8dp][forward][8dp][badge][8dp][urlpill][8dp][menu][8dp]
         Each item carries only a leading margin (marginStart), never a
         trailing margin, so the distance between any two neighbours is
-        exactly one gap. The first item inherits its left inset from
-        topBar's paddingStart, and the last item inherits its right
-        inset from topBar's paddingEnd.
+        exactly one gap.
     -->
     <LinearLayout
         android:id="@+id/topBar"
@@ -71,7 +69,7 @@
             android:background="@drawable/bg_urlbar"
             android:addStatesFromChildren="true"
             android:paddingStart="@dimen/urlbar_padding_start"
-            android:paddingEnd="@dimen/urlbar_padding_start">
+            android:paddingEnd="4dp">
 
             <ImageView
                 android:id="@+id/favicon"
@@ -99,6 +97,26 @@
                 android:textColorHint="@color/text_tertiary"
                 android:textSize="@dimen/text_urlbar"
                 android:importantForAutofill="no" />
+
+            <TextView
+                android:id="@+id/jsBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="22dp"
+                android:layout_marginStart="6dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/bg_js_badge"
+                android:clickable="true"
+                android:contentDescription="@string/cd_toggle_js"
+                android:focusable="true"
+                android:gravity="center"
+                android:letterSpacing="0.08"
+                android:minWidth="26dp"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:text="JS"
+                android:textColor="@color/js_badge_text"
+                android:textSize="10sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <ImageButton
