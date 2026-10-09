@@ -739,31 +739,54 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         blocker.invalidateCache()
         wv.reload()
     }
-
+    
     private fun toggleDesktopMode() {
-        val host = currentHost() ?: return
-        val wv = tabManager.getActiveWebView() ?: return
-        val nowDesktop: Boolean
-        if (prefs.isDesktopHost(host)) {
-            prefs.removeDesktopHostMatching(host)
-            nowDesktop = false
-            Toast.makeText(
-                this,
-                getString(R.string.desktop_off_toast, host),
-                Toast.LENGTH_SHORT
-            ).show()
-        } else {
-            prefs.addDesktopHost(host)
-            nowDesktop = true
-            Toast.makeText(
-                this,
-                getString(R.string.desktop_on_toast, host),
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-        WebViewConfigurator.applyUserAgent(this, wv, nowDesktop)
+    val host = currentHost() ?: return
+    val wv = tabManager.getActiveWebView() ?: return
+    val currentUrl = wv.url ?: return
+
+    val nowDesktop: Boolean
+    if (prefs.isDesktopHost(host)) {
+        prefs.removeDesktopHostMatching(host)
+        nowDesktop = false
+        Toast.makeText(
+            this,
+            getString(R.string.desktop_off_toast, host),
+            Toast.LENGTH_SHORT
+        ).show()
+    } else {
+        prefs.addDesktopHost(host)
+        nowDesktop = true
+        Toast.makeText(
+            this,
+            getString(R.string.desktop_on_toast, host),
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    WebViewConfigurator.applyUserAgent(this, wv, nowDesktop)
+
+    // Force a fresh network fetch with the new UA. Plain reload()
+    // frequently hits the disk cache; the cached response was
+    // fetched with the OLD UA and the server never sent Vary:
+    // User-Agent, so it gets reused and the server never sees the
+    // new identity. Passing User-Agent + Cache-Control: no-cache as
+    // per-load headers forces revalidation over the wire.
+    val ua = wv.settings.userAgentString ?: ""
+    try {
+        wv.loadUrl(
+            currentUrl,
+            mapOf(
+                "User-Agent" to ua,
+                "Cache-Control" to "no-cache"
+            )
+        )
+    } catch (t: Throwable) {
+        // If the header overload is unavailable for any reason,
+        // fall back to a plain reload. Degraded but not broken.
         wv.reload()
     }
+}
 
     private fun updateFooterFor(url: String) {
         binding.footerText.visibility =
