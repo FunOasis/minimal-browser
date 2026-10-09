@@ -118,6 +118,17 @@ object CosmeticFilter {
      * only -- the filter works either way.
      */
     fun hasSubscriptionRules(): Boolean = rules != null
+    /**
+ * Total number of cosmetic rules currently in effect. Used by the
+ * ad-blocking dialog to show a legible count. Falls back to the
+ * built-in selector count when the subscription layer has not yet
+ * loaded anything.
+ */
+    fun ruleCount(): Int {    
+        val current = rules    
+        return if (current == null) FALLBACK_SELECTORS.size
+           else current.genericCount + current.domainCount
+    }
 
     /**
      * Inject the cosmetic stylesheet into the given WebView. Safe to
