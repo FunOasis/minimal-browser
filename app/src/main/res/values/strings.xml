@@ -95,4 +95,10 @@
     <string name="downloads_nothing_to_clear">Nothing to clear</string>
     <string name="downloads_file_missing">File is no longer available</string>
     <string name="downloads_no_app">No app can open this file</string>
+    <string name="menu_disable_site_blocking">Disable blocking on this site</string>
+    <string name="menu_enable_site_blocking">Enable blocking on this site</string>
+    <string name="blocking_disabled_toast">Blocking off for %1$s</string>
+    <string name="blocking_enabled_toast">Blocking on for %1$s</string>
+    <string name="cd_block_count">Blocked on this page</string>
+    <string name="blocked_count_toast">%1$d blocked on this page</string>
 </resources>
