@@ -22,33 +22,29 @@ import java.net.URL
 import java.net.URLDecoder
 
 /**
- * Chrome-parity download handler.
+ * Chrome-parity download handler for http(s) URLs.
  *
- * Chrome does NOT use Android's DownloadManager for downloads. It
- * handles them in-process, through the same network stack that loaded
- * the page, with the same headers, cookies, and TLS session.
+ * Chrome does not use Android's DownloadManager. It handles downloads
+ * in-process, with the same headers, cookies, and TLS session as the
+ * page. That is what this class does.
  *
- * DownloadManager runs in a separate system process. It has no access
- * to the WebView's cookies, no Referer, and on some ROMs sends an empty
- * User-Agent. GitHub's raw-file CDN (Fastly) rejects that signature.
- * That is the root cause of the "Download failed" toast on .java,
- * .json, and other code files from github.com.
+ * Two entry paths:
+ *   - BlobDownloadHelper  -> blob:/data: URLs (JS-mediated byte read)
+ *   - DownloadHandler     -> http(s) URLs (direct HTTP in-process)
  *
- * This implementation matches Chrome:
- *   - HTTP request built with full browser headers (UA, Accept,
- *     Accept-Language, Referer, Cookie).
- *   - Manual redirect following, up to MAX_REDIRECTS hops.
- *   - Response streamed directly to disk in 64 KB chunks.
- *   - MediaStore on API 29+ with IS_PENDING; plain File on API 26-28.
+ * This file now matches BlobDownloadHelper feature-for-feature:
+ *   - Status-bar notification with determinate progress when the
+ *     server sends Content-Length.
+ *   - Completion notification on success or failure.
+ *   - LocalDownloadsStore.record() on success so the file also appears
+ *     in the app's Downloads screen.
  *
- * blob: and data: URLs still route to BlobDownloadHelper, because
- * their bytes only exist inside the WebView renderer.
+ * Storage strategy:
+ *   API 29+: MediaStore.Downloads first, fall back to app-specific
+ *   external Downloads.
+ *   API 26-28: app-specific external Downloads. No runtime permission.
  *
- * onPermissionResult() is retained as a no-op so that the call site in
- * MainActivity.onRequestPermissionsResult() continues to compile.
- * The new download path never needs WRITE_EXTERNAL_STORAGE: on API 29+
- * MediaStore handles it, and on API 26-28 we write to the app-specific
- * external Downloads directory.
+ * Diagnostic toasts carry a suffix identifying the failing stage.
  */
 object DownloadHandler {
 
@@ -57,11 +53,6 @@ object DownloadHandler {
     private const val MAX_REDIRECTS = 10
     private const val CHUNK_SIZE = 64 * 1024
 
-    /**
-     * Chrome desktop UA. Sending a real browser signature is the whole
-     * point: Fastly pattern-matches against known browser UAs and 403s
-     * requests that look like scripts or bare HTTP clients.
-     */
     private const val FALLBACK_UA =
         "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
@@ -116,7 +107,10 @@ object DownloadHandler {
                 toast(activity, activity.getString(R.string.download_started, filename))
 
                 CoroutineScope(Dispatchers.IO).launch {
-                    runDownload(activity, url, filename, ua, referer, cookie, mimeType)
+                    runDownload(
+                        activity, url, filename, ua, referer, cookie,
+                        mimeType, contentLength
+                    )
                 }
             }
             else -> {
@@ -126,16 +120,10 @@ object DownloadHandler {
         }
     }
 
-    /**
-     * Kept as a no-op for API compatibility with the call site in
-     * MainActivity.onRequestPermissionsResult(). The in-process
-     * downloader does not request or require WRITE_EXTERNAL_STORAGE:
-     * MediaStore handles API 29+, and API 26-28 writes to the
-     * app-specific external Downloads folder.
-     */
     @Suppress("UNUSED_PARAMETER")
     fun onPermissionResult(activity: Activity, requestCode: Int, grantResults: IntArray) {
-        Log.i(TAG, "onPermissionResult (no-op)")
+        // Kept for API compatibility. The in-process downloader does
+        // not require WRITE_EXTERNAL_STORAGE.
     }
 
     // -------------------------------------------------------------------------
@@ -149,7 +137,8 @@ object DownloadHandler {
         userAgent: String,
         referer: String?,
         cookie: String?,
-        mimeType: String?
+        mimeType: String?,
+        declaredLength: Long
     ) {
         var currentUrl = startUrl
         var hops = 0
@@ -164,12 +153,8 @@ object DownloadHandler {
                     setRequestProperty("User-Agent", userAgent)
                     setRequestProperty("Accept", "*/*")
                     setRequestProperty("Accept-Language", "en-US,en;q=0.9")
-                    if (!referer.isNullOrBlank()) {
-                        setRequestProperty("Referer", referer)
-                    }
-                    if (!cookie.isNullOrBlank()) {
-                        setRequestProperty("Cookie", cookie)
-                    }
+                    if (!referer.isNullOrBlank()) setRequestProperty("Referer", referer)
+                    if (!cookie.isNullOrBlank()) setRequestProperty("Cookie", cookie)
                 }
 
                 try {
@@ -178,14 +163,12 @@ object DownloadHandler {
 
                     when {
                         code in 200..299 -> {
-                            streamToDisk(activity, conn, filename, mimeType)
+                            streamToDisk(activity, conn, filename, mimeType, declaredLength)
                             return
                         }
                         code in 300..399 -> {
                             val loc = conn.getHeaderField("Location")
-                            if (loc.isNullOrBlank()) {
-                                throw Exception("redirect with no Location")
-                            }
+                            if (loc.isNullOrBlank()) throw Exception("redirect no Location")
                             currentUrl = URL(URL(currentUrl), loc).toString()
                             hops++
                             Log.i(TAG, "redirect -> " + currentUrl)
@@ -199,6 +182,7 @@ object DownloadHandler {
             throw Exception("too many redirects")
         } catch (t: Throwable) {
             Log.e(TAG, "download failed url=" + startUrl, t)
+            DownloadNotifications.complete(activity, filename, success = false)
             toastOnUi(activity, activity.getString(R.string.download_failed) +
                 ": " + t.javaClass.simpleName)
         }
@@ -208,8 +192,18 @@ object DownloadHandler {
         activity: Activity,
         conn: HttpURLConnection,
         filename: String,
-        mimeType: String?
+        mimeType: String?,
+        declaredLength: Long
     ) {
+        // Prefer the server's Content-Length for progress display;
+        // fall back to the length the WebView declared.
+        val serverLen = conn.contentLengthLong
+        val totalBytes = if (serverLen > 0L) serverLen
+                         else if (declaredLength > 0L) declaredLength
+                         else -1L
+
+        DownloadNotifications.start(activity, filename, totalBytes)
+
         val input = conn.inputStream
         var output: OutputStream? = null
         var mediaUri: Uri? = null
@@ -226,14 +220,12 @@ object DownloadHandler {
                     put(MediaStore.Downloads.IS_PENDING, 1)
                 }
                 val resolver = activity.contentResolver
-                val uri = resolver.insert(
-                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
-                ) ?: throw Exception("MediaStore insert returned null")
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: throw Exception("MediaStore insert null")
                 mediaUri = uri
                 output = resolver.openOutputStream(uri)
-                    ?: throw Exception("openOutputStream returned null")
+                    ?: throw Exception("openOutputStream null")
             } else {
-                @Suppress("DEPRECATION")
                 val dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
                     ?: throw Exception("no external files dir")
                 if (!dir.exists()) dir.mkdirs()
@@ -243,30 +235,58 @@ object DownloadHandler {
             }
 
             val buffer = ByteArray(CHUNK_SIZE)
-            var total = 0L
+            var bytesWritten = 0L
+            var lastPct = -1
+
             while (true) {
                 val n = input.read(buffer)
                 if (n <= 0) break
                 output.write(buffer, 0, n)
-                total += n
+                bytesWritten += n
+
+                if (totalBytes > 0L) {
+                    val pct = ((bytesWritten * 100L) / totalBytes).toInt()
+                    if (pct != lastPct) {
+                        lastPct = pct
+                        DownloadNotifications.progress(
+                            activity, filename, bytesWritten, totalBytes
+                        )
+                    }
+                }
             }
             output.flush()
-            Log.i(TAG, "wrote " + total + " bytes to " + filename)
+            Log.i(TAG, "wrote " + bytesWritten + " bytes to " + filename)
 
             if (mediaUri != null) {
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.IS_PENDING, 0)
                 }
                 activity.contentResolver.update(mediaUri, values, null, null)
+                LocalDownloadsStore.get(activity).record(
+                    filename,
+                    mediaUri.toString(),
+                    mimeType ?: "application/octet-stream",
+                    bytesWritten
+                )
+            } else if (fileTarget != null) {
+                LocalDownloadsStore.get(activity).record(
+                    filename,
+                    Uri.fromFile(fileTarget).toString(),
+                    mimeType ?: "application/octet-stream",
+                    bytesWritten
+                )
             }
 
+            DownloadNotifications.complete(activity, filename, success = true)
             toastOnUi(activity, activity.getString(R.string.download_saved, filename))
         } catch (t: Throwable) {
             Log.e(TAG, "stream failed", t)
             if (mediaUri != null) {
-                try { activity.contentResolver.delete(mediaUri, null, null) } catch (_: Throwable) {}
+                try { activity.contentResolver.delete(mediaUri, null, null) }
+                catch (_: Throwable) {}
             }
             fileTarget?.let { try { it.delete() } catch (_: Throwable) {} }
+            DownloadNotifications.complete(activity, filename, success = false)
             toastOnUi(activity, activity.getString(R.string.download_failed) +
                 ": " + t.javaClass.simpleName)
         } finally {
@@ -335,8 +355,6 @@ object DownloadHandler {
             activity.runOnUiThread {
                 Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
             }
-        } catch (_: Throwable) {
-            // Activity gone; drop the toast.
-        }
+        } catch (_: Throwable) {}
     }
 }
