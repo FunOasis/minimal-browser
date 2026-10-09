@@ -71,10 +71,6 @@ class BlockingWebViewClient(
     /**
      * Count of subresource requests blocked on the current top-level
      * navigation. Reset in onPageStarted for each main-frame load.
-     * Read by MainActivity via TabManager for the badge display.
-     *
-     * Written from the WebView IO thread only (shouldInterceptRequest),
-     * read from the UI thread; @Volatile suffices.
      */
     @Volatile
     var blockedCount: Int = 0
@@ -102,13 +98,34 @@ class BlockingWebViewClient(
     ): Boolean {
         val uri = request?.url ?: return false
         val scheme = uri.scheme?.lowercase() ?: return true
+        val isMainFrame = request.isForMainFrame
 
         return when (scheme) {
             "http", "https" -> {
                 if (isDownloadUrl(uri)) {
                     view?.let { ui.onDownloadRequested(it, uri.toString()) }
                     true
-                } else false
+                } else if (isMainFrame && view != null) {
+                    // Apply per-host UA and strip tracking params before
+                    // the navigation proceeds. If either changed, we
+                    // must load the target ourselves -- returning false
+                    // would let WebView follow the original URL with
+                    // the old settings.
+                    val host = uri.host?.lowercase()?.removePrefix("www.")
+                    if (host != null) {
+                        val desktop = prefs.isDesktopHost(host)
+                        WebViewConfigurator.applyUserAgent(appContext, view, desktop)
+                    }
+                    val cleaned = UrlCleaner.clean(uri.toString(), prefs.removeParams)
+                    if (cleaned != uri.toString()) {
+                        view.loadUrl(cleaned)
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
             }
             "about", INTERNAL_SCHEME -> false
             in EXTERNAL_SCHEMES -> { dispatchExternal(uri); true }
@@ -179,8 +196,6 @@ class BlockingWebViewClient(
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
         if (view == null) return
-        // Reset the blocked-request counter on each new main-frame load,
-        // so the badge reflects the current page only.
         blockedCount = 0
         BlobDownloadHelper.injectCapture(view, url)
         ui.onPageLoadStarted(view)
@@ -192,9 +207,6 @@ class BlockingWebViewClient(
         super.onPageFinished(view, url)
         if (view == null) return
         BlobDownloadHelper.injectCapture(view, url)
-        // Skip cosmetic filtering entirely when the user has whitelisted
-        // this host. Network-layer blocking is already skipped by
-        // AdBlocker.isBlocked() for the same host.
         if (!isHostDisabled(url)) {
             CosmeticFilter.apply(view, url)
         }
