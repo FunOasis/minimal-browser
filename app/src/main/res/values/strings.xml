@@ -50,7 +50,7 @@
     <string name="custom_filters_blocklist_hint">One hostname per line. Subdomains are blocked automatically. Lines starting with # or ! are ignored.</string>
     <string name="custom_filters_patterns_label">Custom URL patterns</string>
     <string name="custom_filters_patterns_hint">One URL substring per line. Any request whose URL contains it is blocked. Example: /ads/ or track?</string>
-    <string name="custom_filters_stats">Active: %1$d hosts, %2$d patterns</string>
+    <string name="custom_filters_stats">Active: %1$d hosts, %2$d patterns, %3$d cosmetic</string>
     <string name="custom_filters_saved">Filters saved.</string>
     <string name="custom_filters_cleared">Filters cleared</string>
     <string name="action_save">Save</string>
