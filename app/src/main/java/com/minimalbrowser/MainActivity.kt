@@ -53,20 +53,9 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
     private var lastSeenTabId: Long = -1L
 
-    // True between the user tapping Exit (or confirming the exit dialog)
-    // and the activity actually finishing. When set, we skip both the
-    // Bundle save and the disk snapshot, and clear the disk snapshot.
     private var exiting: Boolean = false
-
-    // True while the activity is between onPause and onResume. Drives the
-    // aggressive background freeze threshold in the tab-freeze scheduler.
     private var isBackgrounded: Boolean = false
 
-    // Fullscreen presentation state. Populated while a page is using the
-    // HTML5 Fullscreen API (video player, manga reader, PDF viewer, or a
-    // generic requestFullscreen call). fullscreenView is the WebView-owned
-    // View we attach over the chrome; fullscreenCallback is the handle we
-    // hand back to WebView when the user exits via Back.
     private var fullscreenView: View? = null
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
 
@@ -76,8 +65,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     private var currentSuggestions: List<HistoryStore.Entry> = emptyList()
     private var suppressSuggestionRefresh = false
 
-    // Periodic checker that freezes idle tabs. Runs only while the
-    // activity is resumed; cancelled in onPause.
     private val freezeHandler = Handler(Looper.getMainLooper())
     private val freezeTick = object : Runnable {
         override fun run() {
@@ -95,17 +82,17 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-// Ask for notification permission on API 33+ so download
-// progress appears in the status bar. On earlier versions the
-// permission is granted implicitly and this is a no-op.
-        if (android.os.Build.VERSION.SDK_INT >= 33) {    
-            if (checkSelfPermission("android.permission.POST_NOTIFICATIONS")        
-                != android.content.pm.PackageManager.PERMISSION_GRANTED) {        
-                requestPermissions(            
-                    arrayOf("android.permission.POST_NOTIFICATIONS"), 9001        
-                )    
+
+        // API 33+ requires runtime permission for notifications.
+        // Download progress and completion use the status bar.
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            if (checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(
+                    arrayOf("android.permission.POST_NOTIFICATIONS"), 9001
+                )
             }
-        }        
+        }
 
         blocker = AdBlocker.get(this)
         prefs   = Prefs.get(this)
@@ -148,6 +135,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
         binding.btnMenu.setOnClickListener { showOverflowMenu(it) }
         binding.tabBadge.setOnClickListener { showTabSwitcher() }
+        binding.jsBadge.setOnClickListener { toggleActiveJavaScript() }
 
         binding.addressBar.setOnEditorActionListener { _, actionId, event ->
             val isGo = actionId == EditorInfo.IME_ACTION_GO ||
@@ -176,9 +164,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                // Fullscreen takes priority: exiting fullscreen is the
-                // natural "back" gesture, matching every video player
-                // and manga reader on Android.
                 if (tabManager.isInFullscreen()) {
                     requestExitFullscreen()
                     return
@@ -204,11 +189,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         val savedActive = savedInstanceState?.getInt(KEY_ACTIVE_TAB, 0) ?: 0
         val shortcutUrl = intent?.getStringExtra(EXTRA_SHORTCUT_URL)
 
-        // Restore priority:
-        //   1. Bundle from system-initiated process death. Freshest.
-        //   2. Disk snapshot from a swipe-from-recents or reboot.
-        //   3. Shortcut URL alone.
-        //   4. Fresh home tab.
         val disk = if (savedUrls.isNullOrEmpty()) SessionStore.load(this) else null
 
         val restoreUrls: List<String>? = when {
@@ -234,6 +214,9 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         } else {
             tabManager.create()
         }
+
+        // Sync the JS badge to whatever the initial active tab is.
+        updateJsBadge()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -250,10 +233,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
     }
 
-    /**
-     * Persist tab URLs and active index into the Bundle for
-     * system-initiated process death.
-     */
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         if (exiting || isFinishing) return
@@ -265,11 +244,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         outState.putInt(KEY_ACTIVE_TAB, tabManager.getActiveIndex())
     }
 
-    /**
-     * Persist the session to disk. onStop is the last reliable lifecycle
-     * hook before the OS may reclaim the process -- it runs before the
-     * swipe-from-recents path that skips onSaveInstanceState entirely.
-     */
     override fun onStop() {
         super.onStop()
         if (exiting || isFinishing) return
@@ -288,32 +262,25 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         super.onResume()
         isBackgrounded = false
 
-        // Some devices strip the immersive flags when the activity is
-        // paused (an incoming call, a notification tap). Re-apply them
-        // if we are still in fullscreen.
         if (fullscreenView != null) hideSystemBars()
 
-        // Bring the active tab back if it was frozen while backgrounded.
         tabManager.unfreezeActiveIfFrozen()
 
         tabManager.getActiveWebView()?.resumeTimers()
         tabManager.resumeActive()
 
-        // Start the freeze scheduler.
         freezeHandler.removeCallbacks(freezeTick)
         freezeHandler.postDelayed(freezeTick, FREEZE_CHECK_INTERVAL_MS)
+
+        updateJsBadge()
     }
 
     override fun onPause() {
         isBackgrounded = true
 
-        // Freeze aggressively on the way out. Anything that has not been
-        // touched in FREEZE_AFTER_BG_MS is released; the active tab is
-        // included because the user is not looking at anything.
         val frozen = tabManager.freezeIdleTabs(isBackgrounded = true)
         if (frozen > 0) updateTabBadge()
 
-        // Stop the periodic scheduler.
         freezeHandler.removeCallbacks(freezeTick)
 
         tabManager.pauseAll()
@@ -339,9 +306,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     override fun onDestroy() {
-        // Detach any fullscreen view before the activity tears down.
-        // TabManager.destroyAll() also fires onFullscreenHide, but we
-        // clean up defensively in case the callback order surprises us.
         fullscreenView?.let { v ->
             (v.parent as? ViewGroup)?.removeView(v)
         }
@@ -359,22 +323,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     // Fullscreen
     // -------------------------------------------------------------------------
 
-    /**
-     * Attach the WebView's fullscreen content surface on top of the
-     * chrome and go immersive.
-     *
-     * Where the view lands: the framework's root FrameLayout
-     * (android.R.id.content). Our activity's own LinearLayout stays
-     * intact beneath it, but visually is completely covered. This is
-     * the standard Android pattern -- it survives rotation and lets
-     * the fullscreen view span the entire screen, including under
-     * where the status bar was.
-     *
-     * Reentry guard: some pages call requestFullscreen() twice in a
-     * row. If we are already showing a fullscreen view, reject the
-     * second request and immediately dismiss its callback, which is
-     * what Chrome does.
-     */
     private fun enterFullscreen(view: View, callback: WebChromeClient.CustomViewCallback) {
         if (fullscreenView != null) {
             try { callback.onCustomViewHidden() } catch (_: Throwable) {}
@@ -383,17 +331,12 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         fullscreenView = view
         fullscreenCallback = callback
 
-        // Hide our chrome. The WebView keeps rendering underneath; we
-        // just make its surface invisible so nothing bleeds through the
-        // fullscreen view's transparent pixels.
         binding.topBar.visibility = View.GONE
         binding.progressBar.visibility = View.GONE
         binding.footerText.visibility = View.GONE
         binding.swipeRefresh.visibility = View.GONE
         binding.webViewContainer.visibility = View.GONE
 
-        // Attach the fullscreen surface. MATCH_PARENT in both axes
-        // covers the whole window once decorFitsSystemWindows is false.
         val root = findViewById<ViewGroup>(android.R.id.content)
         root.addView(
             view,
@@ -406,12 +349,6 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         hideSystemBars()
     }
 
-    /**
-     * Called when the WebView has decided the fullscreen session is
-     * over. Either the page called exitFullscreen() itself, or we asked
-     * for it via requestExitFullscreen() and the WebView completed the
-     * teardown. Either way, the visual state is now ours to restore.
-     */
     private fun exitFullscreen() {
         val view = fullscreenView ?: return
         fullscreenView = null
@@ -427,22 +364,11 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         showSystemBars()
     }
 
-    /**
-     * User-initiated exit (Back press while fullscreen). We invoke the
-     * callback WebView gave us at onShowCustomView; that tells the
-     * renderer to leave fullscreen, which fires onHideCustomView() on
-     * the TabWebChromeClient, which routes back into exitFullscreen().
-     *
-     * We deliberately do not tear down the view here. Letting WebView
-     * drive the teardown keeps the state machine in one place.
-     */
     private fun requestExitFullscreen() {
         val cb = fullscreenCallback ?: return
         try {
             cb.onCustomViewHidden()
         } catch (_: Throwable) {
-            // If the callback is stale for any reason, clean up directly
-            // so the toolbar cannot get stuck hidden.
             exitFullscreen()
         }
     }
@@ -619,16 +545,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         }
 
         R.id.action_js -> {
-            prefs.javaScriptEnabled = !prefs.javaScriptEnabled
-            tabManager.tabs.forEach { tab ->
-                tab.webView?.settings?.javaScriptEnabled = prefs.javaScriptEnabled
-                tab.webView?.reload()
-            }
-            Toast.makeText(
-                this,
-                "JavaScript: " + (if (prefs.javaScriptEnabled) "ON" else "OFF"),
-                Toast.LENGTH_SHORT
-            ).show()
+            toggleActiveJavaScript()
             true
         }
 
@@ -683,6 +600,31 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         val active = tabManager.getActiveIndex() + 1
         val total = tabManager.count()
         binding.tabBadge.text = active.toString() + "/" + total
+        updateJsBadge()
+    }
+
+    /**
+     * Sync the JS badge to the active tab's JavaScript state.
+     * Selected state drives the drawable selector: selected = JS on
+     * (badge is quiet), unselected = JS off (badge turns red).
+     */
+    private fun updateJsBadge() {
+        binding.jsBadge.isSelected = tabManager.isActiveJsEnabled()
+    }
+
+    /**
+     * Toggle JavaScript for the active tab only, refresh the badge and
+     * show a short toast. Called from both the badge tap and the
+     * overflow menu item.
+     */
+    private fun toggleActiveJavaScript() {
+        val enabled = tabManager.toggleActiveJavaScript()
+        updateJsBadge()
+        Toast.makeText(
+            this,
+            "JavaScript: " + (if (enabled) "ON" else "OFF"),
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun updateFooterFor(url: String) {
@@ -726,7 +668,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     }
 
     // -------------------------------------------------------------------------
-    // Ad blocking dialog -- warehouse driven
+    // Ad blocking dialog
     // -------------------------------------------------------------------------
 
     private fun showCustomFiltersDialog() {
