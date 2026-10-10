@@ -97,6 +97,8 @@
     <string name="downloads_no_app">No app can open this file</string>
     <string name="menu_disable_site_blocking">Disable blocking on this site</string>
     <string name="menu_desktop_site">Desktop site</string>
+    <string name="menu_reset_site_overrides">Reset all site settings</string>
+    <string name="site_overrides_reset">All site settings cleared</string>
     <string name="menu_mobile_site">Mobile site</string>
     <string name="desktop_on_toast">Desktop site for %1$s</string>
     <string name="desktop_off_toast">Mobile site for %1$s</string>
