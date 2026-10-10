@@ -16,8 +16,7 @@ import java.net.URI
  * Rule source: CosmeticStore. Nothing is hardcoded. On a fresh install
  * the cosmetic warehouse is empty, CosmeticFilter holds no rules, and
  * the cosmetic layer does nothing until the user supplies a
- * subscription URL through a future UI. This is deliberate: the APK
- * ships with zero ad-blocking data.
+ * subscription URL through the ad-blocking dialog.
  */
 object CosmeticFilter {
 
@@ -39,13 +38,6 @@ object CosmeticFilter {
         ): Boolean = size > 16
     }
 
-    /**
-     * Called after CosmeticStore has produced fresh raw text. Parsing
-     * happens on the caller's thread -- invoke from Dispatchers.IO.
-     *
-     * If the incoming text yields zero usable rules we keep whatever
-     * was loaded previously rather than blanking the layer.
-     */
     fun updateFrom(text: String) {
         if (text.isEmpty()) return
         val parsed = CosmeticRules.parse(text)
@@ -61,27 +53,24 @@ object CosmeticFilter {
     }
 
     /**
-     * True if subscription-backed rules have been loaded.
+     * Wipe all loaded rules and the CSS cache. Used when the user has
+     * removed every cosmetic subscription and the warehouse is empty.
+     * Distinct from updateFrom("") which is a no-op.
      */
+    fun clear() {
+        rules = null
+        synchronized(cssCache) { cssCache.clear() }
+        Log.i(TAG, "Rules cleared")
+    }
+
     fun hasSubscriptionRules(): Boolean = rules != null
 
-    /**
-     * Total number of cosmetic rules currently in effect. Zero when
-     * the warehouse is empty and no subscription has been loaded.
-     */
     fun ruleCount(): Int {
         val current = rules
         return if (current == null) FALLBACK_SELECTORS.size
                else current.genericCount + current.domainCount
     }
 
-    /**
-     * Inject the cosmetic stylesheet into the given WebView. Safe to
-     * call multiple times and safe to call on any loaded page. Skips
-     * internal pages (home), data: URLs, and about: URLs.
-     *
-     * No-op when there are no rules to inject.
-     */
     fun apply(webView: WebView, url: String?) {
         if (url.isNullOrBlank()) return
         if (url.startsWith(Prefs.HOME_URL)) return
