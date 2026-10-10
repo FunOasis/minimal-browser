@@ -887,11 +887,15 @@ private fun mobileSubdomainParent(host: String): String? {
 
 private fun showCustomFiltersDialog() {
     val store = BlocklistStore.get(this)
+    val cosmeticStore = CosmeticStore.get(this)
     val view = layoutInflater.inflate(R.layout.dialog_custom_filters, null)
 
     val editSubs            = view.findViewById<EditText>(R.id.editSubscriptions)
     val warehouseContainer  = view.findViewById<LinearLayout>(R.id.warehouseContainer)
     val warehouseEmptyText  = view.findViewById<TextView>(R.id.warehouseEmptyText)
+    val editCosmetics       = view.findViewById<EditText>(R.id.editCosmeticSubscriptions)
+    val cosmeticContainer   = view.findViewById<LinearLayout>(R.id.cosmeticWarehouseContainer)
+    val cosmeticEmptyText   = view.findViewById<TextView>(R.id.cosmeticWarehouseEmptyText)
     val editBlocklist       = view.findViewById<EditText>(R.id.editBlocklist)
     val editPatterns        = view.findViewById<EditText>(R.id.editPatterns)
     val statsView           = view.findViewById<TextView>(R.id.customFilterStats)
@@ -899,11 +903,12 @@ private fun showCustomFiltersDialog() {
     editBlocklist.setText(prefs.customBlocklist)
     editPatterns.setText(prefs.customFilters)
 
-    // Pre-populate with the current warehouse URLs, so the user
-    // sees what is active. Clearing the field becomes an
-    // unambiguous "remove everything".
-    val initialUrls = store.listAll().map { it.url }.sorted()
-    editSubs.setText(initialUrls.joinToString("\n"))
+    editSubs.setText(
+        store.listAll().map { it.url }.sorted().joinToString("\n")
+    )
+    editCosmetics.setText(
+        cosmeticStore.listAll().map { it.url }.sorted().joinToString("\n")
+    )
 
     fun refreshStats() {
         val s = blocker.stats()
@@ -915,7 +920,7 @@ private fun showCustomFiltersDialog() {
         )
     }
 
-    fun refreshWarehouse() {
+    fun refreshBlocklistWarehouse() {
         val entries = store.listAll()
         warehouseContainer.removeAllViews()
         if (entries.isEmpty()) {
@@ -943,7 +948,7 @@ private fun showCustomFiltersDialog() {
                 removeBtn.setOnClickListener {
                     store.remove(e.url)
                     blocker.reloadCustomRules()
-                    refreshWarehouse()
+                    refreshBlocklistWarehouse()
                     refreshStats()
                 }
 
@@ -953,53 +958,112 @@ private fun showCustomFiltersDialog() {
         refreshStats()
     }
 
-    refreshWarehouse()
+    fun refreshCosmeticWarehouse() {
+        val entries = cosmeticStore.listAll()
+        cosmeticContainer.removeAllViews()
+        if (entries.isEmpty()) {
+            cosmeticEmptyText.visibility = View.VISIBLE
+        } else {
+            cosmeticEmptyText.visibility = View.GONE
+            for (e in entries) {
+                val row = layoutInflater.inflate(
+                    R.layout.item_warehouse_list,
+                    cosmeticContainer,
+                    false
+                )
+                val urlView = row.findViewById<TextView>(R.id.warehouseUrl)
+                val metaView = row.findViewById<TextView>(R.id.warehouseMeta)
+                val removeBtn = row.findViewById<ImageButton>(R.id.removeWarehouseList)
+
+                urlView.text = e.url
+
+                val sizeLabel = humanSize(e.byteSize)
+                val ageLabel = humanAge(e.lastFetched)
+                val prefix = if (e.ok) "" else "FAILED - "
+                metaView.text = prefix + sizeLabel + " - " + ageLabel
+
+                removeBtn.setOnClickListener {
+                    cosmeticStore.remove(e.url)
+                    reloadCosmeticFilter(cosmeticStore)
+                    refreshCosmeticWarehouse()
+                    refreshStats()
+                }
+
+                cosmeticContainer.addView(row)
+            }
+        }
+        refreshStats()
+    }
+
+    refreshBlocklistWarehouse()
+    refreshCosmeticWarehouse()
 
     MaterialAlertDialogBuilder(this)
         .setTitle(R.string.menu_custom_filters)
         .setView(view)
         .setPositiveButton(R.string.action_save) { _, _ ->
-            val rawSubs = editSubs.text.toString()
-            val desired = rawSubs.lineSequence()
+            prefs.customBlocklist = editBlocklist.text.toString()
+            prefs.customFilters = editPatterns.text.toString()
+
+            val desiredBlock = editSubs.text.toString()
+                .lineSequence()
                 .map { it.trim() }
                 .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
                 .toSet()
 
-            prefs.customBlocklist = editBlocklist.text.toString()
-            prefs.customFilters = editPatterns.text.toString()
+            val desiredCosmetic = editCosmetics.text.toString()
+                .lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
+                .toSet()
 
-            // Diff both directions. The previous version only
-            // computed toAdd, so clearing the subscription field
-            // did nothing to the warehouse.
-            val existing = store.listAll().map { it.url }.toSet()
-            val toAdd = desired.filter { it !in existing }
-            val toRemove = existing.filter { it !in desired }
+            lifecycleScope.launch(Dispatchers.IO) {
+                // Blocklist warehouse diff.
+                val existingBlock = store.listAll().map { it.url }.toSet()
+                val blockToAdd = desiredBlock.filter { it !in existingBlock }
+                val blockToRemove = existingBlock.filter { it !in desiredBlock }
+                for (u in blockToRemove) store.remove(u)
 
-            // Removals are synchronous: delete the ZIP, drop the
-            // manifest entry, invalidate the hosts cache. Do them
-            // before the async fetch so the reload that follows
-            // sees the final state.
-            for (u in toRemove) store.remove(u)
+                // Cosmetic warehouse diff.
+                val existingCosmetic = cosmeticStore.listAll().map { it.url }.toSet()
+                val cosmeticToAdd = desiredCosmetic.filter { it !in existingCosmetic }
+                val cosmeticToRemove = existingCosmetic.filter { it !in desiredCosmetic }
+                for (u in cosmeticToRemove) cosmeticStore.remove(u)
 
-            if (toAdd.isEmpty() && toRemove.isEmpty()) {
+                // Fetch additions.
+                var failCount = 0
+                for (u in blockToAdd) {
+                    if (!store.addAndFetch(u).ok) failCount++
+                }
+                for (u in cosmeticToAdd) {
+                    if (!cosmeticStore.addAndFetch(u).ok) failCount++
+                }
+
+                // Reload cosmetic filter from whatever is on disk
+                // now. Clear if the warehouse ended up empty.
+                val raw = cosmeticStore.loadAllRaw()
+                if (raw.isEmpty()) CosmeticFilter.clear()
+                else CosmeticFilter.updateFrom(raw)
+
                 blocker.reloadCustomRules()
-                Toast.makeText(
-                    this,
-                    R.string.custom_filters_saved,
-                    Toast.LENGTH_SHORT
-                ).show()
-            } else if (toAdd.isEmpty()) {
-                blocker.reloadCustomRules()
-                val msg = if (toRemove.size == 1) "Removed 1 list"
-                          else "Removed " + toRemove.size + " lists"
-                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(
-                    this,
-                    "Fetching " + toAdd.size + " new list(s)...",
-                    Toast.LENGTH_SHORT
-                ).show()
-                fetchNewLists(store, toAdd)
+
+                val added = blockToAdd.size + cosmeticToAdd.size
+                val removed = blockToRemove.size + cosmeticToRemove.size
+
+                withContext(Dispatchers.Main) {
+                    val msg = when {
+                        added == 0 && removed == 0 && failCount == 0 ->
+                            getString(R.string.custom_filters_saved)
+                        failCount > 0 ->
+                            "Saved (" + failCount + " failed)"
+                        removed > 0 && added == 0 -> {
+                            if (removed == 1) "Removed 1 list"
+                            else "Removed " + removed + " lists"
+                        }
+                        else -> "Saved. Added " + added + ", removed " + removed
+                    }
+                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+                }
             }
         }
         .setNeutralButton(R.string.action_clear) { _, _ ->
