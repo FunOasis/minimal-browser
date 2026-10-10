@@ -1224,6 +1224,11 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
     private fun displayUrl(url: String): String =
         if (url.startsWith("minimal://")) "" else url
 
+    private fun isHttpUrl(url: String): Boolean {    
+        val lower = url.lowercase()    
+        return lower.startsWith("http://") || lower.startsWith("https://")
+    }
+
     private fun navigate() {
         val input = binding.addressBar.text.toString().trim()
         if (input.isEmpty()) return
