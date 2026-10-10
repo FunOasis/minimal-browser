@@ -1075,26 +1075,14 @@ private fun showCustomFiltersDialog() {
         .setNegativeButton(android.R.string.cancel, null)
         .show()
 }
-    
-    private fun fetchNewLists(store: BlocklistStore, urls: List<String>) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            var ok = 0
-            var failed = 0
-            for (u in urls) {
-                val result = store.addAndFetch(u)
-                if (result.ok) ok++ else failed++
-            }
-            withContext(Dispatchers.Main) {
-                blocker.reloadCustomRules()
-                val msg = if (failed == 0) {
-                    "Added " + ok + " list(s)"
-                } else {
-                    "Added " + ok + ", " + failed + " failed"
-                }
-                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
-            }
-        }
+
+private fun reloadCosmeticFilter(store: CosmeticStore) {
+    lifecycleScope.launch(Dispatchers.IO) {
+        val raw = store.loadAllRaw()
+        if (raw.isEmpty()) CosmeticFilter.clear()
+        else CosmeticFilter.updateFrom(raw)
     }
+}
 
     private fun humanSize(bytes: Long): String {
         return when {
