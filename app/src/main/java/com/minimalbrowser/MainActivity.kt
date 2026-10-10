@@ -885,112 +885,133 @@ private fun mobileSubdomainParent(host: String): String? {
     // Ad blocking dialog
     // -------------------------------------------------------------------------
 
-    private fun showCustomFiltersDialog() {
-        val store = BlocklistStore.get(this)
-        val view = layoutInflater.inflate(R.layout.dialog_custom_filters, null)
+private fun showCustomFiltersDialog() {
+    val store = BlocklistStore.get(this)
+    val view = layoutInflater.inflate(R.layout.dialog_custom_filters, null)
 
-        val editSubs            = view.findViewById<EditText>(R.id.editSubscriptions)
-        val warehouseContainer  = view.findViewById<LinearLayout>(R.id.warehouseContainer)
-        val warehouseEmptyText  = view.findViewById<TextView>(R.id.warehouseEmptyText)
-        val editBlocklist       = view.findViewById<EditText>(R.id.editBlocklist)
-        val editPatterns        = view.findViewById<EditText>(R.id.editPatterns)
-        val statsView           = view.findViewById<TextView>(R.id.customFilterStats)
+    val editSubs            = view.findViewById<EditText>(R.id.editSubscriptions)
+    val warehouseContainer  = view.findViewById<LinearLayout>(R.id.warehouseContainer)
+    val warehouseEmptyText  = view.findViewById<TextView>(R.id.warehouseEmptyText)
+    val editBlocklist       = view.findViewById<EditText>(R.id.editBlocklist)
+    val editPatterns        = view.findViewById<EditText>(R.id.editPatterns)
+    val statsView           = view.findViewById<TextView>(R.id.customFilterStats)
 
-        editBlocklist.setText(prefs.customBlocklist)
-        editPatterns.setText(prefs.customFilters)
+    editBlocklist.setText(prefs.customBlocklist)
+    editPatterns.setText(prefs.customFilters)
 
-        fun refreshStats() {
-            val s = blocker.stats()
-            statsView.text = getString(
-                R.string.custom_filters_stats,
-                s.hosts,
-                s.patterns,
-                CosmeticFilter.ruleCount()
-            )
-        }
+    // Pre-populate with the current warehouse URLs, so the user
+    // sees what is active. Clearing the field becomes an
+    // unambiguous "remove everything".
+    val initialUrls = store.listAll().map { it.url }.sorted()
+    editSubs.setText(initialUrls.joinToString("\n"))
 
-        fun refreshWarehouse() {
-            val entries = store.listAll()
-            warehouseContainer.removeAllViews()
-            if (entries.isEmpty()) {
-                warehouseEmptyText.visibility = View.VISIBLE
-            } else {
-                warehouseEmptyText.visibility = View.GONE
-                for (e in entries) {
-                    val row = layoutInflater.inflate(
-                        R.layout.item_warehouse_list,
-                        warehouseContainer,
-                        false
-                    )
-                    val urlView = row.findViewById<TextView>(R.id.warehouseUrl)
-                    val metaView = row.findViewById<TextView>(R.id.warehouseMeta)
-                    val removeBtn = row.findViewById<ImageButton>(R.id.removeWarehouseList)
-
-                    urlView.text = e.url
-
-                    val hostLabel = e.hostCount.toString() + " hosts"
-                    val sizeLabel = humanSize(e.byteSize)
-                    val ageLabel = humanAge(e.lastFetched)
-                    val prefix = if (e.ok) "" else "FAILED - "
-                    metaView.text = prefix + hostLabel + " - " + sizeLabel + " - " + ageLabel
-
-                    removeBtn.setOnClickListener {
-                        store.remove(e.url)
-                        blocker.reloadCustomRules()
-                        refreshWarehouse()
-                        refreshStats()
-                    }
-
-                    warehouseContainer.addView(row)
-                }
-            }
-            refreshStats()
-        }
-
-        refreshWarehouse()
-
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.menu_custom_filters)
-            .setView(view)
-            .setPositiveButton(R.string.action_save) { _, _ ->
-                val rawSubs = editSubs.text.toString()
-                val newUrls = rawSubs.lineSequence()
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
-                    .toList()
-
-                prefs.customBlocklist = editBlocklist.text.toString()
-                prefs.customFilters = editPatterns.text.toString()
-
-                val existing = store.listAll().map { it.url }.toSet()
-                val toAdd = newUrls.filter { it !in existing }
-
-                if (toAdd.isEmpty()) {
-                    blocker.reloadCustomRules()
-                    Toast.makeText(
-                        this,
-                        R.string.custom_filters_saved,
-                        Toast.LENGTH_SHORT
-                    ).show()
-                } else {
-                    Toast.makeText(
-                        this,
-                        "Fetching " + toAdd.size + " new list(s)...",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    fetchNewLists(store, toAdd)
-                }
-            }
-            .setNeutralButton(R.string.action_clear) { _, _ ->
-                prefs.customBlocklist = ""
-                prefs.customFilters = ""
-                blocker.reloadCustomRules()
-                Toast.makeText(this, R.string.custom_filters_cleared, Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+    fun refreshStats() {
+        val s = blocker.stats()
+        statsView.text = getString(
+            R.string.custom_filters_stats,
+            s.hosts,
+            s.patterns,
+            CosmeticFilter.ruleCount()
+        )
     }
 
+    fun refreshWarehouse() {
+        val entries = store.listAll()
+        warehouseContainer.removeAllViews()
+        if (entries.isEmpty()) {
+            warehouseEmptyText.visibility = View.VISIBLE
+        } else {
+            warehouseEmptyText.visibility = View.GONE
+            for (e in entries) {
+                val row = layoutInflater.inflate(
+                    R.layout.item_warehouse_list,
+                    warehouseContainer,
+                    false
+                )
+                val urlView = row.findViewById<TextView>(R.id.warehouseUrl)
+                val metaView = row.findViewById<TextView>(R.id.warehouseMeta)
+                val removeBtn = row.findViewById<ImageButton>(R.id.removeWarehouseList)
+
+                urlView.text = e.url
+
+                val hostLabel = e.hostCount.toString() + " hosts"
+                val sizeLabel = humanSize(e.byteSize)
+                val ageLabel = humanAge(e.lastFetched)
+                val prefix = if (e.ok) "" else "FAILED - "
+                metaView.text = prefix + hostLabel + " - " + sizeLabel + " - " + ageLabel
+
+                removeBtn.setOnClickListener {
+                    store.remove(e.url)
+                    blocker.reloadCustomRules()
+                    refreshWarehouse()
+                    refreshStats()
+                }
+
+                warehouseContainer.addView(row)
+            }
+        }
+        refreshStats()
+    }
+
+    refreshWarehouse()
+
+    MaterialAlertDialogBuilder(this)
+        .setTitle(R.string.menu_custom_filters)
+        .setView(view)
+        .setPositiveButton(R.string.action_save) { _, _ ->
+            val rawSubs = editSubs.text.toString()
+            val desired = rawSubs.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
+                .toSet()
+
+            prefs.customBlocklist = editBlocklist.text.toString()
+            prefs.customFilters = editPatterns.text.toString()
+
+            // Diff both directions. The previous version only
+            // computed toAdd, so clearing the subscription field
+            // did nothing to the warehouse.
+            val existing = store.listAll().map { it.url }.toSet()
+            val toAdd = desired.filter { it !in existing }
+            val toRemove = existing.filter { it !in desired }
+
+            // Removals are synchronous: delete the ZIP, drop the
+            // manifest entry, invalidate the hosts cache. Do them
+            // before the async fetch so the reload that follows
+            // sees the final state.
+            for (u in toRemove) store.remove(u)
+
+            if (toAdd.isEmpty() && toRemove.isEmpty()) {
+                blocker.reloadCustomRules()
+                Toast.makeText(
+                    this,
+                    R.string.custom_filters_saved,
+                    Toast.LENGTH_SHORT
+                ).show()
+            } else if (toAdd.isEmpty()) {
+                blocker.reloadCustomRules()
+                val msg = if (toRemove.size == 1) "Removed 1 list"
+                          else "Removed " + toRemove.size + " lists"
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(
+                    this,
+                    "Fetching " + toAdd.size + " new list(s)...",
+                    Toast.LENGTH_SHORT
+                ).show()
+                fetchNewLists(store, toAdd)
+            }
+        }
+        .setNeutralButton(R.string.action_clear) { _, _ ->
+            prefs.customBlocklist = ""
+            prefs.customFilters = ""
+            blocker.reloadCustomRules()
+            Toast.makeText(this, R.string.custom_filters_cleared, Toast.LENGTH_SHORT).show()
+        }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+}
+    
     private fun fetchNewLists(store: BlocklistStore, urls: List<String>) {
         lifecycleScope.launch(Dispatchers.IO) {
             var ok = 0
