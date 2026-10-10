@@ -4,11 +4,11 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * User-editable preferences. The warehouse owns subscription lists, so
- * this class is intentionally small: homepage, the global JavaScript
- * default, the two free-form filter text fields, the per-site blocking
- * whitelist, the per-site desktop-mode list, and the URL tracking
- * parameter strip list.
+ * User-editable preferences.
+ *
+ * Deliberately contains no default subscription URLs. Ad blocking is
+ * entirely opt-in: the user pastes list URLs into the ad-blocking
+ * dialog, or the warehouse stays empty. Nothing is shipped in the APK.
  */
 class Prefs private constructor(context: Context) {
 
@@ -70,9 +70,7 @@ class Prefs private constructor(context: Context) {
         }
 
     /**
-     * Tracking parameters to strip from main-frame navigations. On the
-     * very first access (key never written) returns the default list.
-     * Once the user saves an empty set, they get an empty set.
+     * Tracking parameters to strip from main-frame navigations.
      */
     var removeParams: Set<String>
         get() {
@@ -91,14 +89,15 @@ class Prefs private constructor(context: Context) {
             sp.edit().putString(KEY_REMOVE_PARAMS, cleaned.joinToString("\n")).apply()
         }
 
-        /**
- * True once the default blocklist URLs have been seeded on this
- * install. Guards against AdBlocker re-seeding the warehouse when
- * the user has deliberately emptied it.
- */
-var blocklistSeeded: Boolean
-    get() = sp.getBoolean(KEY_BLOCKLIST_SEEDED, false)
-    set(v) = sp.edit().putBoolean(KEY_BLOCKLIST_SEEDED, v).apply()
+    /**
+     * One-shot flag for the upgrade from the old build that shipped
+     * hardcoded EasyList URLs in the cosmetic warehouse. When false,
+     * MinimalBrowserApp wipes the cosmetic warehouse once and flips
+     * this to true. Never re-arms.
+     */
+    var legacyDefaultsCleaned: Boolean
+        get() = sp.getBoolean(KEY_LEGACY_CLEANED, false)
+        set(v) = sp.edit().putBoolean(KEY_LEGACY_CLEANED, v).apply()
 
     // ------------------------------------------------------------------
     // Host-list helpers
@@ -159,18 +158,10 @@ var blocklistSeeded: Boolean
         private const val KEY_DISABLED_HOSTS = "disabled_hosts"
         private const val KEY_DESKTOP_HOSTS = "desktop_hosts"
         private const val KEY_REMOVE_PARAMS = "remove_params"
-        private const val KEY_BLOCKLIST_SEEDED = "blocklist_seeded"
+        private const val KEY_LEGACY_CLEANED = "legacy_defaults_cleaned"
 
         const val HOME_URL = "minimal://home"
         const val DEFAULT_HOMEPAGE = HOME_URL
-
-        const val DEFAULT_SUBSCRIPTION_URLS =
-            "https://blocklistproject.github.io/Lists/ads.txt\n" +
-            "https://blocklistproject.github.io/Lists/tracking.txt"
-
-        const val DEFAULT_COSMETIC_URLS =
-            "https://easylist.to/easylist/easylist.txt\n" +
-            "https://easylist.to/easylist/easyprivacy.txt"
 
         @Volatile private var inst: Prefs? = null
 
