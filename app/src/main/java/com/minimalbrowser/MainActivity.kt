@@ -190,49 +190,84 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         })
 
         val savedUrls = savedInstanceState?.getStringArrayList(KEY_TAB_URLS)
-        val savedActive = savedInstanceState?.getInt(KEY_ACTIVE_TAB, 0) ?: 0
-        val shortcutUrl = intent?.getStringExtra(EXTRA_SHORTCUT_URL)
+val savedActive = savedInstanceState?.getInt(KEY_ACTIVE_TAB, 0) ?: 0
 
-        val disk = if (savedUrls.isNullOrEmpty()) SessionStore.load(this) else null
+// Two ways an external URL reaches us:
+//   1. ACTION_VIEW from another app's link tap -> intent.data
+//   2. Our own launcher shortcut -> EXTRA_SHORTCUT_URL
+// Earlier builds only read #2, so every external link was
+// silently dropped on cold start.
+val shortcutUrl = intent?.getStringExtra(EXTRA_SHORTCUT_URL)
+val externalUrl = intent?.data?.toString()?.takeIf { isHttpUrl(it) }
 
-        val restoreUrls: List<String>? = when {
-            !savedUrls.isNullOrEmpty() -> savedUrls
-            disk != null -> disk.urls
-            else -> null
-        }
-        val restoreActive: Int = when {
-            !savedUrls.isNullOrEmpty() -> savedActive
-            disk != null -> disk.activeIndex
-            else -> 0
-        }
+// Consume both so a config-change recreation of this activity
+// does not re-navigate. Android stores intent.data by
+// reference, so mutating it here affects what a later
+// onCreate(savedInstanceState) sees.
+intent?.removeExtra(EXTRA_SHORTCUT_URL)
+intent?.let { it.data = null }
 
-        if (restoreUrls != null) {
-            tabManager.restore(restoreUrls, restoreActive)
-            if (!shortcutUrl.isNullOrBlank()) {
-                intent.removeExtra(EXTRA_SHORTCUT_URL)
-                tabManager.loadActive(shortcutUrl)
-            }
-        } else if (!shortcutUrl.isNullOrBlank()) {
-            intent.removeExtra(EXTRA_SHORTCUT_URL)
-            tabManager.create(url = shortcutUrl)
-        } else {
-            tabManager.create()
+val disk = if (savedUrls.isNullOrEmpty()) SessionStore.load(this) else null
+
+val restoreUrls: List<String>? = when {
+    !savedUrls.isNullOrEmpty() -> savedUrls
+    disk != null -> disk.urls
+    else -> null
+}
+val restoreActive: Int = when {
+    !savedUrls.isNullOrEmpty() -> savedActive
+    disk != null -> disk.activeIndex
+    else -> 0
+}
+
+if (restoreUrls != null) {
+    tabManager.restore(restoreUrls, restoreActive)
+    // Session is preserved. Shortcut loads into the active tab;
+    // an external link opens as a new tab so the restored
+    // session is not clobbered. This mirrors Chrome's
+    // behaviour when an external app hands it a URL.
+    when {
+        !shortcutUrl.isNullOrBlank() -> {
+            tabManager.loadActive(shortcutUrl)
         }
+        externalUrl != null -> {
+            tabManager.create(url = externalUrl, makeActive = true)
+        }
+    }
+} else if (!shortcutUrl.isNullOrBlank()) {
+    tabManager.create(url = shortcutUrl)
+} else if (externalUrl != null) {
+    tabManager.create(url = externalUrl)
+} else {
+    tabManager.create()
+}
 
         updateJsBadge()
         updateBlockCountBadge()
     }
 
     override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        val url = intent.getStringExtra(EXTRA_SHORTCUT_URL)
-        intent.removeExtra(EXTRA_SHORTCUT_URL)
-        if (!url.isNullOrBlank()) {
-            tabManager.loadActive(url)
-            setAddressBarText(displayUrl(url))
+    super.onNewIntent(intent)
+    setIntent(intent)
+
+    val shortcutUrl = intent.getStringExtra(EXTRA_SHORTCUT_URL)
+    intent.removeExtra(EXTRA_SHORTCUT_URL)
+    val externalUrl = intent.data?.toString()?.takeIf { isHttpUrl(it) }
+    intent.data = null
+
+    when {
+        !shortcutUrl.isNullOrBlank() -> {
+            // Shortcut contract: load into the active tab.
+            tabManager.loadActive(shortcutUrl)
+            setAddressBarText(displayUrl(shortcutUrl))
+        }
+        externalUrl != null -> {
+            // External link while the app is already running.
+            // New tab, session preserved.
+            tabManager.create(url = externalUrl, makeActive = true)
         }
     }
+}
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
