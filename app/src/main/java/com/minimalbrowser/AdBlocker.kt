@@ -7,6 +7,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.net.URI
 
+/**
+ * Ad blocker. Rule sources, in priority order:
+ *
+ *   1. Host entries from the blocklist warehouse (subscription ZIPs
+ *      downloaded on demand; empty until the user adds a URL).
+ *   2. Host entries from Prefs.customBlocklist.
+ *   3. URL substring patterns from Prefs.customFilters.
+ *   4. Exception patterns ("@@substring") from Prefs.customFilters.
+ *
+ * There are NO hardcoded lists. On a fresh install the blocker is
+ * inert until the user supplies URLs or custom rules. This is
+ * deliberate: the APK ships with no ad-blocking data.
+ */
 class AdBlocker private constructor(
     private val context: Context?,
     preloadedHosts: Set<String> = emptySet(),
@@ -38,14 +51,10 @@ class AdBlocker private constructor(
         )
     }
 
-    // Stage 6: flat sorted LongArray of FNV-1a hashes over reversed
-    // hostnames. ~1.2 MB for 150k hosts vs ~35 MB for the trie.
     @Volatile private var hostSet: HostSet = HostSet.EMPTY
     @Volatile private var urlPatterns: Set<String> = emptySet()
     @Volatile private var exceptionPatterns: Set<String> = emptySet()
     @Volatile private var hostCount: Int = 0
-    @Volatile private var basePatterns: Set<String> = emptySet()
-    @Volatile private var baseExceptions: Set<String> = emptySet()
 
     @Volatile private var blocklistStore: BlocklistStore? = null
     @Volatile private var prefs: Prefs? = null
@@ -63,44 +72,12 @@ class AdBlocker private constructor(
             prefs = Prefs.get(ctx)
 
             CoroutineScope(Dispatchers.IO).launch {
-                loadBasePatterns(ctx)
-                seedDefaultsIfNeeded()
                 reloadAllRules()
                 blocklistStore?.refreshAll(force = false)
                 reloadAllRules()
             }
         }
     }
-
-    private fun loadBasePatterns(ctx: Context) {
-        val filterText = readAssetText(ctx, "filters.txt")
-        basePatterns = parsePatterns(filterText)
-        baseExceptions = parseExceptions(filterText)
-    }
-
-    private suspend fun seedDefaultsIfNeeded() {
-    val store = blocklistStore ?: return
-    val p = prefs ?: return
-
-    // Seed once per install. Without this guard, an empty warehouse
-    // is indistinguishable from a fresh install, so clearing the
-    // subscription list would be silently undone on the next cold
-    // start when AdBlocker re-seeds the defaults.
-    if (p.blocklistSeeded) return
-    p.blocklistSeeded = true
-
-    if (store.listAll().isNotEmpty()) return
-
-    val defaults = Prefs.DEFAULT_SUBSCRIPTION_URLS
-        .lineSequence()
-        .map { it.trim() }
-        .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
-        .toList()
-    Log.i(TAG, "Seeding " + defaults.size + " default subscription lists")
-    for (url in defaults) {
-        store.addAndFetch(url)
-    }
-}
 
     private suspend fun reloadAllRules() {
         val store = blocklistStore ?: return
@@ -123,12 +100,7 @@ class AdBlocker private constructor(
         mergedHosts.addAll(subHosts)
         mergedHosts.addAll(customHosts)
 
-        val mergedPatterns =
-            if (customPatterns.isEmpty()) basePatterns else basePatterns + customPatterns
-        val mergedExceptions =
-            if (customExceptions.isEmpty()) baseExceptions else baseExceptions + customExceptions
-
-        applyRules(mergedHosts, mergedPatterns, mergedExceptions)
+        applyRules(mergedHosts, customPatterns, customExceptions)
         Log.i(TAG, "Rules applied: " + stats().toString())
     }
 
@@ -151,11 +123,6 @@ class AdBlocker private constructor(
         }
     }
 
-    /**
-     * Called by MainActivity after the user toggles a per-site
-     * whitelist entry, so the decision cache does not serve a stale
-     * result for the site the user just changed.
-     */
     fun invalidateCache() {
         decisionCache.evictAll()
     }
@@ -173,17 +140,6 @@ class AdBlocker private constructor(
         decisionCache.evictAll()
     }
 
-    private fun readAssetText(ctx: Context, file: String): String {
-        return try {
-            ctx.assets.open(file)
-                .bufferedReader(Charsets.UTF_8)
-                .use { it.readText() }
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not load " + file + ": " + e.message)
-            ""
-        }
-    }
-
     private fun parseHosts(text: String): Set<String> {
         if (text.isEmpty()) return emptySet()
         val out = HashSet<String>(1024)
@@ -199,10 +155,6 @@ class AdBlocker private constructor(
         return out
     }
 
-    /**
-     * Regular URL substring patterns. Lines beginning with @@ are
-     * skipped here and handled by parseExceptions().
-     */
     private fun parsePatterns(text: String): Set<String> {
         if (text.isEmpty()) return emptySet()
         val out = HashSet<String>(256)
@@ -215,16 +167,6 @@ class AdBlocker private constructor(
         return out
     }
 
-    /**
-     * Exception patterns: a request whose URL contains one of these
-     * substrings is allowed even if it would otherwise match a host or
-     * pattern rule.
-     *
-     * Supported syntax: "@@substring". For convenience, leading "||"
-     * or "|" and trailing "^" or "|" (ABP delimiters) are stripped so
-     * a line copied verbatim from an ABP list still works as a plain
-     * substring match against the lowercased URL.
-     */
     private fun parseExceptions(text: String): Set<String> {
         if (text.isEmpty()) return emptySet()
         val out = HashSet<String>(32)
@@ -247,8 +189,6 @@ class AdBlocker private constructor(
         val lower = url.lowercase()
         val host = extractHost(lower)
 
-        // Per-site whitelist. Checked before the decision cache so that
-        // toggling the whitelist takes effect immediately.
         val p = prefs
         if (p != null && host != null && p.isHostDisabled(host)) return false
 
@@ -259,7 +199,6 @@ class AdBlocker private constructor(
     }
 
     private fun check(lower: String, host: String?): Boolean {
-        // Exceptions first: an explicit allow wins over everything else.
         if (exceptionPatterns.isNotEmpty()) {
             for (p in exceptionPatterns) {
                 if (lower.contains(p)) return false
