@@ -757,52 +757,88 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         wv.reload()
     }
     
-    private fun toggleDesktopMode() {
+private fun toggleDesktopMode() {
     val host = currentHost() ?: return
     val wv = tabManager.getActiveWebView() ?: return
     val currentUrl = wv.url ?: return
 
     val nowDesktop: Boolean
+    val targetHost: String
+
     if (prefs.isDesktopHost(host)) {
+        // Turning OFF. Removes the entry that was matching, which
+        // may be the parent domain rather than the m. subdomain.
         prefs.removeDesktopHostMatching(host)
         nowDesktop = false
+        targetHost = host
         Toast.makeText(
             this,
             getString(R.string.desktop_off_toast, host),
             Toast.LENGTH_SHORT
         ).show()
     } else {
-        prefs.addDesktopHost(host)
+        // Turning ON. If we are on a mobile subdomain like
+        // m.youtube.com, add the parent (youtube.com) instead and
+        // navigate to it. The m. subdomain serves mobile HTML
+        // regardless of UA -- only the parent domain honours the
+        // desktop UA string.
+        val parent = mobileSubdomainParent(host)
+        if (parent != null) {
+            prefs.addDesktopHost(parent)
+            targetHost = parent
+        } else {
+            prefs.addDesktopHost(host)
+            targetHost = host
+        }
         nowDesktop = true
         Toast.makeText(
             this,
-            getString(R.string.desktop_on_toast, host),
+            getString(R.string.desktop_on_toast, targetHost),
             Toast.LENGTH_SHORT
         ).show()
     }
 
     WebViewConfigurator.applyUserAgent(this, wv, nowDesktop)
 
-    // Force a fresh network fetch with the new UA. Plain reload()
-    // frequently hits the disk cache; the cached response was
-    // fetched with the OLD UA and the server never sent Vary:
-    // User-Agent, so it gets reused and the server never sees the
-    // new identity. Passing User-Agent + Cache-Control: no-cache as
-    // per-load headers forces revalidation over the wire.
+    // When we switched to a different host (mobile subdomain ->
+    // parent), navigate to that host's root. Otherwise reload the
+    // current URL. Either way, send the new UA as a per-load header
+    // and force revalidation so we do not serve the cached mobile
+    // HTML from the disk cache.
+    val targetUrl = if (targetHost != host) {
+        "https://" + targetHost + "/"
+    } else {
+        currentUrl
+    }
+
     val ua = wv.settings.userAgentString ?: ""
     try {
         wv.loadUrl(
-            currentUrl,
+            targetUrl,
             mapOf(
                 "User-Agent" to ua,
                 "Cache-Control" to "no-cache"
             )
         )
     } catch (t: Throwable) {
-        // If the header overload is unavailable for any reason,
-        // fall back to a plain reload. Degraded but not broken.
         wv.reload()
     }
+}
+
+/**
+ * If the host is a mobile subdomain like "m.example.com", return the
+ * parent domain "example.com". Otherwise null.
+ *
+ * Only strips a single leading "m." because that is the convention
+ * used by every major site (YouTube, Facebook, Twitter, Reddit).
+ * Hosts like "mobile.example.com" are left alone because they are
+ * not a universal convention.
+ */
+private fun mobileSubdomainParent(host: String): String? {
+    if (!host.startsWith("m.")) return null
+    val parent = host.substring(2)
+    if (!parent.contains('.')) return null
+    return parent
 }
 
     private fun updateFooterFor(url: String) {
