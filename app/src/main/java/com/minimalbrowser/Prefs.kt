@@ -91,6 +91,15 @@ class Prefs private constructor(context: Context) {
             sp.edit().putString(KEY_REMOVE_PARAMS, cleaned.joinToString("\n")).apply()
         }
 
+        /**
+ * True once the default blocklist URLs have been seeded on this
+ * install. Guards against AdBlocker re-seeding the warehouse when
+ * the user has deliberately emptied it.
+ */
+var blocklistSeeded: Boolean
+    get() = sp.getBoolean(KEY_BLOCKLIST_SEEDED, false)
+    set(v) = sp.edit().putBoolean(KEY_BLOCKLIST_SEEDED, v).apply()
+
     // ------------------------------------------------------------------
     // Host-list helpers
     // ------------------------------------------------------------------
