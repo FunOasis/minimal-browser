@@ -625,6 +625,23 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             true
         }
 
+        R.id.action_reset_site_overrides -> {    
+            prefs.disabledHosts = emptySet()    
+            prefs.desktopHosts = emptySet()    
+            blocker.invalidateCache()    
+            Toast.makeText(                
+                this,
+        R.string.site_overrides_reset,        
+                Toast.LENGTH_SHORT    
+            ).show()    
+            val wv = tabManager.getActiveWebView()    
+            if (wv != null) {
+        // Snap back to mobile UA immediately.        
+                WebViewConfigurator.applyUserAgent(this, wv, false)    
+            }    
+            true
+        }
+
         R.id.action_downloads -> {
             startActivity(Intent(this, DownloadsActivity::class.java))
             true
