@@ -79,18 +79,28 @@ class AdBlocker private constructor(
     }
 
     private suspend fun seedDefaultsIfNeeded() {
-        val store = blocklistStore ?: return
-        if (store.listAll().isNotEmpty()) return
-        val defaults = Prefs.DEFAULT_SUBSCRIPTION_URLS
-            .lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
-            .toList()
-        Log.i(TAG, "Seeding " + defaults.size + " default subscription lists")
-        for (url in defaults) {
-            store.addAndFetch(url)
-        }
+    val store = blocklistStore ?: return
+    val p = prefs ?: return
+
+    // Seed once per install. Without this guard, an empty warehouse
+    // is indistinguishable from a fresh install, so clearing the
+    // subscription list would be silently undone on the next cold
+    // start when AdBlocker re-seeds the defaults.
+    if (p.blocklistSeeded) return
+    p.blocklistSeeded = true
+
+    if (store.listAll().isNotEmpty()) return
+
+    val defaults = Prefs.DEFAULT_SUBSCRIPTION_URLS
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
+        .toList()
+    Log.i(TAG, "Seeding " + defaults.size + " default subscription lists")
+    for (url in defaults) {
+        store.addAndFetch(url)
     }
+}
 
     private suspend fun reloadAllRules() {
         val store = blocklistStore ?: return
