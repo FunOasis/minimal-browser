@@ -53,6 +53,12 @@
     <string name="custom_filters_stats">Active: %1$d hosts, %2$d patterns, %3$d cosmetic</string>
     <string name="custom_filters_saved">Filters saved.</string>
     <string name="custom_filters_cleared">Filters cleared</string>
+
+    <string name="custom_cosmetics_label">Cosmetic subscriptions</string>
+    <string name="custom_cosmetics_hint">EasyList-format lists (easylist.txt, easyprivacy.txt). Cosmetic rules hide ad containers. One URL per line.</string>
+    <string name="custom_cosmetics_warehouse_label">Cosmetic warehouse</string>
+    <string name="custom_cosmetics_warehouse_empty">No cosmetic lists cached.</string>
+    
     <string name="action_save">Save</string>
     <string name="action_clear">Clear</string>
 
