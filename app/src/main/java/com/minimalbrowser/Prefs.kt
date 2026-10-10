@@ -159,6 +159,7 @@ var blocklistSeeded: Boolean
         private const val KEY_DISABLED_HOSTS = "disabled_hosts"
         private const val KEY_DESKTOP_HOSTS = "desktop_hosts"
         private const val KEY_REMOVE_PARAMS = "remove_params"
+        private const val KEY_BLOCKLIST_SEEDED = "blocklist_seeded"
 
         const val HOME_URL = "minimal://home"
         const val DEFAULT_HOMEPAGE = HOME_URL
