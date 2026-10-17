@@ -117,4 +117,9 @@
     <string name="blocking_enabled_toast">Blocking on for %1$s</string>
     <string name="cd_block_count">Blocked on this page</string>
     <string name="blocked_count_toast">%1$d blocked on this page</string>
+    <string name="menu_freeze_settings">Auto-freeze tabs</string>
+    <string name="freeze_fg_label">Inactive tabs (foreground)</string>
+    <string name="freeze_fg_hint">Non-active tabs not touched for this long are frozen to save CPU.</string>
+    <string name="freeze_bg_label">All tabs (background)</string>
+    <string name="freeze_bg_hint">When the app is backgrounded, every tab older than this is frozen.</string>
 </resources>
