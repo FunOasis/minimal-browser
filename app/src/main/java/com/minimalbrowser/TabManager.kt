@@ -30,9 +30,6 @@ class TabManager(
         private const val TAG = "TabManager"
 
         const val MAX_TABS = 6
-
-        const val FREEZE_AFTER_FG_MS = 10 * 60 * 1000L
-        const val FREEZE_AFTER_BG_MS = 2 * 60 * 1000L
     }
 
     class Tab(val id: Long) {
