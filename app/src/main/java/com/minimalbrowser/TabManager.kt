@@ -227,21 +227,40 @@ class TabManager(
         getActiveWebView()?.reload()
     }
 
-    fun freezeIdleTabs(isBackgrounded: Boolean): Int {
-        val now = System.currentTimeMillis()
-        val threshold = if (isBackgrounded) FREEZE_AFTER_BG_MS else FREEZE_AFTER_FG_MS
-        var count = 0
-        for ((i, tab) in _tabs.withIndex()) {
-            if (tab.frozen) continue
-            if (tab.webView == null) continue
-            if (i == activeIndex && !isBackgrounded) continue
-            val idle = now - tab.lastUsedAt
-            if (idle < threshold) continue
-            freezeTab(i)
-            count++
-        }
-        return count
+    /**
+ * Release the WebView of every tab that has been idle past the
+ * user-configured threshold. Called periodically from MainActivity's
+ * scheduler.
+ *
+ * Two independent thresholds, both editable via the menu:
+ *   prefs.freezeIdleForegroundMinutes -- non-active tabs in the
+ *     foreground. The active tab is never frozen in foreground.
+ *   prefs.freezeIdleBackgroundMinutes -- every tab, including the
+ *     active one, once the app has been backgrounded that long.
+ *
+ * A value of 0 for either threshold disables that path entirely.
+ *
+ * Returns the number of tabs frozen this round, for logging.
+ */
+fun freezeIdleTabs(isBackgrounded: Boolean): Int {
+    val minutes = if (isBackgrounded) prefs.freezeIdleBackgroundMinutes
+                  else prefs.freezeIdleForegroundMinutes
+    if (minutes <= 0) return 0
+    val threshold = minutes * 60_000L
+
+    val now = System.currentTimeMillis()
+    var count = 0
+    for ((i, tab) in _tabs.withIndex()) {
+        if (tab.frozen) continue
+        if (tab.webView == null) continue
+        if (i == activeIndex && !isBackgrounded) continue
+        val idle = now - tab.lastUsedAt
+        if (idle < threshold) continue
+        freezeTab(i)
+        count++
     }
+    return count
+}
 
     fun unfreezeActiveIfFrozen() {
         val idx = activeIndex
