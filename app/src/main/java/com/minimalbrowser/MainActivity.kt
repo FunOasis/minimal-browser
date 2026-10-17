@@ -865,6 +865,43 @@ private fun toggleDesktopMode() {
     }
 }
 
+private fun showFreezeSettingsDialog() {
+    val view = layoutInflater.inflate(R.layout.dialog_freeze_settings, null)
+    val fgSpinner = view.findViewById<android.widget.Spinner>(R.id.fgSpinner)
+    val bgSpinner = view.findViewById<android.widget.Spinner>(R.id.bgSpinner)
+
+    val labels = arrayOf("1 min", "2 min", "5 min", "10 min", "30 min", "Never")
+    val values = intArrayOf(1, 2, 5, 10, 30, 0)
+
+    val adapter = ArrayAdapter(
+        this,
+        android.R.layout.simple_spinner_item,
+        labels
+    )
+    adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+    fgSpinner.adapter = adapter
+    bgSpinner.adapter = adapter
+
+    val fgIdx = values.indexOf(prefs.freezeIdleForegroundMinutes)
+        .let { if (it < 0) 3 else it }   // fall back to "10 min"
+    val bgIdx = values.indexOf(prefs.freezeIdleBackgroundMinutes)
+        .let { if (it < 0) 1 else it }   // fall back to "2 min"
+    fgSpinner.setSelection(fgIdx)
+    bgSpinner.setSelection(bgIdx)
+
+    MaterialAlertDialogBuilder(this)
+        .setTitle(R.string.menu_freeze_settings)
+        .setView(view)
+        .setPositiveButton(R.string.action_save) { _, _ ->
+            prefs.freezeIdleForegroundMinutes =
+                values[fgSpinner.selectedItemPosition]
+            prefs.freezeIdleBackgroundMinutes =
+                values[bgSpinner.selectedItemPosition]
+        }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+}
+
 /**
  * If the host is a mobile subdomain like "m.example.com", return the
  * parent domain "example.com". Otherwise null.
