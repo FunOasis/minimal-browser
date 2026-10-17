@@ -660,6 +660,11 @@ if (restoreUrls != null) {
             true
         }
 
+        R.id.action_freeze_settings -> {    
+            showFreezeSettingsDialog()    
+            true
+        }
+
         R.id.action_reset_site_overrides -> {    
             prefs.disabledHosts = emptySet()    
             prefs.desktopHosts = emptySet()    
