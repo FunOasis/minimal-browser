@@ -32,6 +32,22 @@ class Prefs private constructor(context: Context) {
         set(v) = sp.edit().putString(KEY_CUSTOM_FILTERS, v).apply()
 
     /**
+     * Minutes of foreground idle time after which a non-active tab is
+     * frozen. 0 means never. Default 10.
+     */
+    var freezeIdleForegroundMinutes: Int
+        get() = sp.getInt(KEY_FREEZE_FG_MIN, 10)
+        set(v) = sp.edit().putInt(KEY_FREEZE_FG_MIN, v.coerceAtLeast(0)).apply()
+
+    /**
+     * Minutes of background age after which every tab -- including the
+     * active one -- is frozen. 0 means never. Default 2.
+     */
+    var freezeIdleBackgroundMinutes: Int
+        get() = sp.getInt(KEY_FREEZE_BG_MIN, 2)
+        set(v) = sp.edit().putInt(KEY_FREEZE_BG_MIN, v.coerceAtLeast(0)).apply()
+
+    /**
      * Hosts (and subdomains) on which ad blocking is disabled.
      */
     var disabledHosts: Set<String>
@@ -91,9 +107,7 @@ class Prefs private constructor(context: Context) {
 
     /**
      * One-shot flag for the upgrade from the old build that shipped
-     * hardcoded EasyList URLs in the cosmetic warehouse. When false,
-     * MinimalBrowserApp wipes the cosmetic warehouse once and flips
-     * this to true. Never re-arms.
+     * hardcoded EasyList URLs in the cosmetic warehouse.
      */
     var legacyDefaultsCleaned: Boolean
         get() = sp.getBoolean(KEY_LEGACY_CLEANED, false)
@@ -159,6 +173,8 @@ class Prefs private constructor(context: Context) {
         private const val KEY_DESKTOP_HOSTS = "desktop_hosts"
         private const val KEY_REMOVE_PARAMS = "remove_params"
         private const val KEY_LEGACY_CLEANED = "legacy_defaults_cleaned"
+        private const val KEY_FREEZE_FG_MIN = "freeze_fg_min"
+        private const val KEY_FREEZE_BG_MIN = "freeze_bg_min"
 
         const val HOME_URL = "minimal://home"
         const val DEFAULT_HOMEPAGE = HOME_URL
