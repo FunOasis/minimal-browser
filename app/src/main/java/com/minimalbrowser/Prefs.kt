@@ -161,8 +161,8 @@ class Prefs private constructor(context: Context) {
         return false
     }
 
-    private fun normalize(host: String): String =
-        host.lowercase().removePrefix("www.").trim()
+    private fun normalize(host: String): String =    
+    host.trim().lowercase().removePrefix("www.")
 
     companion object {
         private const val KEY_HOMEPAGE = "homepage"
