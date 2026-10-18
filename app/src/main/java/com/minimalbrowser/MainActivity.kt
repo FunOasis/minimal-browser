@@ -1436,8 +1436,12 @@ private fun updateFindCount(activeMatch: Int, totalMatches: Int) {
         binding.findPrev.isEnabled = false
         binding.findNext.isEnabled = false
     } else {
+        // WebView reports the first match as ordinal 0 after
+        // findAllAsync (0-based on the initial pass, 1-based after
+        // findNext). Clamp so the counter always reads 1..total.
+        val ordinal = activeMatch.coerceIn(1, totalMatches)
         binding.findCount.text =
-            getString(R.string.find_count_format, activeMatch, totalMatches)
+            getString(R.string.find_count_format, ordinal, totalMatches)
         binding.findCount.setTextColor(getColor(R.color.text_secondary))
         binding.findPrev.isEnabled = true
         binding.findNext.isEnabled = true
