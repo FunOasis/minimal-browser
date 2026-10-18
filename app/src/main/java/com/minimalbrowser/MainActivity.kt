@@ -941,6 +941,58 @@ private fun mobileSubdomainParent(host: String): String? {
             .show()
     }
 
+    private fun confirmClearWebViewData() {
+    MaterialAlertDialogBuilder(this)
+        .setTitle(R.string.clear_webview_data_title)
+        .setMessage(R.string.clear_webview_data_message)
+        .setPositiveButton(R.string.clear_webview_data_confirm) { _, _ ->
+            clearWebViewDataAndRestart()
+        }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+}
+
+private fun clearWebViewDataAndRestart() {
+    // 1. Wipe HTTP cache via a throwaway WebView. The current tabs
+    //    are about to be destroyed, so caching them is pointless.
+    try {
+        val throwaway = WebView(this)
+        throwaway.clearCache(true)
+        throwaway.destroy()
+    } catch (_: Throwable) {}
+
+    // 2. Wipe cookies for every domain.
+    try {
+        val cm = android.webkit.CookieManager.getInstance()
+        cm.removeAllCookies(null)
+        cm.flush()
+    } catch (_: Throwable) {}
+
+    // 3. Wipe localStorage, IndexedDB, service workers.
+    try {
+        android.webkit.WebStorage.getInstance().deleteAllData()
+    } catch (_: Throwable) {}
+
+    // 4. Wipe session so the next cold start begins with one home
+    //    tab. Without this, the previous URL is restored and could
+    //    still land on the page whose renderer state is dead.
+    SessionStore.clear(this)
+
+    // 5. Set exiting so onStop does not re-save the session.
+    exiting = true
+
+    Toast.makeText(
+        this,
+        R.string.clear_webview_data_done,
+        Toast.LENGTH_SHORT
+    ).show()
+
+    // 6. Kill the process. Android will spawn a fresh WebView
+    //    renderer on next launch, unaffected by whatever corrupted
+    //    the previous one.
+    finishAndRemoveTask()
+}
+
     private fun addCurrentPageShortcut() {
         val wv = tabManager.getActiveWebView() ?: return
         val url = wv.url
