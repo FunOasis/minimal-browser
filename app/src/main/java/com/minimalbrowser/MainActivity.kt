@@ -677,6 +677,10 @@ if (restoreUrls != null) {
             true
         }
 
+        R.id.action_find_in_page -> { 
+            showFindBar(); 
+            true }
+
         R.id.action_js -> {
             toggleActiveJavaScript()
             true
