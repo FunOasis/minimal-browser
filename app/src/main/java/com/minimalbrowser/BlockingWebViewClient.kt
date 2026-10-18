@@ -93,48 +93,59 @@ class BlockingWebViewClient(
     }
 
     override fun shouldOverrideUrlLoading(
-        view: WebView?,
-        request: WebResourceRequest?
-    ): Boolean {
-        val uri = request?.url ?: return false
-        val scheme = uri.scheme?.lowercase() ?: return true
-        val isMainFrame = request.isForMainFrame
+    view: WebView?,
+    request: WebResourceRequest?
+): Boolean {
+    val uri = request?.url ?: return false
+    val scheme = uri.scheme?.lowercase() ?: return true
+    val isMainFrame = request.isForMainFrame
 
-        return when (scheme) {
-            "http", "https" -> {
-                if (isDownloadUrl(uri)) {
-                    view?.let { ui.onDownloadRequested(it, uri.toString()) }
+    return when (scheme) {
+        "http", "https" -> {
+            if (isDownloadUrl(uri)) {
+                view?.let { ui.onDownloadRequested(it, uri.toString()) }
+                true
+            } else if (isMainFrame && view != null) {
+                val host = uri.host?.lowercase()?.removePrefix("www.")
+                if (host != null) {
+                    val desktop = prefs.isDesktopHost(host)
+                    WebViewConfigurator.applyUserAgent(appContext, view, desktop)
+                }
+                val cleaned = UrlCleaner.clean(uri.toString(), prefs.removeParams)
+                if (cleaned != uri.toString()) {
+                    // CRITICAL: do NOT call view.loadUrl() here
+                    // synchronously. Doing so re-enters the
+                    // WebView's navigation pipeline while it is
+                    // still processing the current attempt, which
+                    // deadlocks the renderer. Symptom: the URL
+                    // commits (address bar updates) but the
+                    // rendered frame stays on the previous page,
+                    // and back/forward/refresh all freeze because
+                    // they queue into the same stuck pipeline.
+                    //
+                    // Posting defers the load to the next UI thread
+                    // iteration, after the current navigation
+                    // attempt has fully unwound. Returning true
+                    // cancels the original attempt.
+                    view.post {
+                        try { view.loadUrl(cleaned) } catch (_: Throwable) {}
+                    }
                     true
-                } else if (isMainFrame && view != null) {
-                    // Apply per-host UA and strip tracking params before
-                    // the navigation proceeds. If either changed, we
-                    // must load the target ourselves -- returning false
-                    // would let WebView follow the original URL with
-                    // the old settings.
-                    val host = uri.host?.lowercase()?.removePrefix("www.")
-                    if (host != null) {
-                        val desktop = prefs.isDesktopHost(host)
-                        WebViewConfigurator.applyUserAgent(appContext, view, desktop)
-                    }
-                    val cleaned = UrlCleaner.clean(uri.toString(), prefs.removeParams)
-                    if (cleaned != uri.toString()) {
-                        view.loadUrl(cleaned)
-                        true
-                    } else {
-                        false
-                    }
                 } else {
                     false
                 }
-            }
-            "about", INTERNAL_SCHEME -> false
-            in EXTERNAL_SCHEMES -> { dispatchExternal(uri); true }
-            else -> {
-                Log.w(TAG, "Refusing navigation with scheme '" + scheme + "'")
-                true
+            } else {
+                false
             }
         }
+        "about", INTERNAL_SCHEME -> false
+        in EXTERNAL_SCHEMES -> { dispatchExternal(uri); true }
+        else -> {
+            Log.w(TAG, "Refusing navigation with scheme '" + scheme + "'")
+            true
+        }
     }
+}
 
     private fun isDownloadUrl(uri: Uri): Boolean {
         val host = uri.host?.lowercase()
