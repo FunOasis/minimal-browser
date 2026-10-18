@@ -9,32 +9,17 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 
-/**
- * Status-bar notifications for in-process downloads.
- *
- * Channel importance is DEFAULT (not LOW). LOW is technically visible
- * in the status bar on stock Android, but several OEM ROMs -- HyperOS
- * and MIUI in particular -- bucket LOW channels under "silent
- * notifications" and hide their icons from the status bar. DEFAULT
- * guarantees the progress icon appears.
- *
- * The channel ID has a version suffix (v2). Android does not let an
- * existing channel's importance be raised in code -- only lowered. Any
- * device that already ran the previous LOW-importance channel would
- * keep it forever under the old ID. Bumping the ID forces a fresh
- * channel with the new importance.
- *
- * Progress updates use setOnlyAlertOnce(true) so the notification does
- * not buzz or peek on every chunk. Completion uses setOnlyAlertOnce
- * (false) so the final "Saved" notification can alert once.
- */
 object DownloadNotifications {
 
     private const val TAG = "DownloadNotif"
     private const val CHANNEL_ID = "mb_downloads_v2"
     private const val CHANNEL_NAME = "Downloads"
     private const val CHANNEL_DESC = "In-progress and completed file downloads"
-    private fun idFor(fileName: String): Int = NOTIFICATION_ID + (fileName.hashCode() and 0x00FFFFFF)
+    private const val NOTIFICATION_ID_BASE = 0x4D42001
+
+    /** One notification slot per active file, so two downloads do not stomp each other. */
+    private fun idFor(fileName: String): Int =
+        NOTIFICATION_ID_BASE + (fileName.hashCode() and 0x00FFFFFF)
 
     fun start(context: Context, fileName: String, totalBytes: Long) {
         ensureChannel(context)
@@ -44,7 +29,7 @@ object DownloadNotifications {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .build()
-        post(context, n)
+        post(context, idFor(fileName), n)
     }
 
     fun progress(context: Context, fileName: String, bytes: Long, total: Long) {
@@ -56,7 +41,7 @@ object DownloadNotifications {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .build()
-        post(context, n)
+        post(context, idFor(fileName), n)
     }
 
     fun complete(context: Context, fileName: String, success: Boolean) {
@@ -71,7 +56,7 @@ object DownloadNotifications {
             .setAutoCancel(true)
             .setOnlyAlertOnce(false)
             .build()
-        post(context, n)
+        post(context, idFor(fileName), n)
     }
 
     private fun base(context: Context): NotificationCompat.Builder =
@@ -80,9 +65,9 @@ object DownloadNotifications {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
 
-    private fun post(context: Context, n: Notification) {
+    private fun post(context: Context, id: Int, n: Notification) {
         try {
-            NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, n)
+            NotificationManagerCompat.from(context).notify(id, n)
         } catch (t: Throwable) {
             Log.w(TAG, "notify failed: " + t.message)
         }
