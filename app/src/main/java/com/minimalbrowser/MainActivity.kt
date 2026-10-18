@@ -696,6 +696,11 @@ if (restoreUrls != null) {
             true
         }
 
+        R.id.action_clear_webview_data -> {    
+            confirmClearWebViewData()    
+            true
+        }
+
         R.id.action_exit -> {
             exiting = true
             SessionStore.clear(this)
