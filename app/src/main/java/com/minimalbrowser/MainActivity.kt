@@ -144,6 +144,36 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         binding.jsBadge.setOnClickListener { toggleActiveJavaScript() }
         binding.blockCountBadge.setOnClickListener { showBlockedCountDetail() }
 
+        // ---- Find in page --------------------------------------------
+binding.findClose.setOnClickListener { hideFindBar() }
+
+binding.findPrev.setOnClickListener { findNext(false) }
+binding.findNext.setOnClickListener { findNext(true) }
+
+binding.findInput.setOnEditorActionListener { _, actionId, event ->
+    val isSearch = actionId == EditorInfo.IME_ACTION_SEARCH ||
+        actionId == EditorInfo.IME_ACTION_DONE ||
+        (event?.keyCode == KeyEvent.KEYCODE_ENTER &&
+            event.action == KeyEvent.ACTION_DOWN)
+    if (isSearch) {
+        findNext(true)
+        true
+    } else false
+}
+
+binding.findInput.addTextChangedListener(object : TextWatcher {
+    override fun afterTextChanged(s: Editable?) {
+        if (binding.findBar.visibility != View.VISIBLE) return
+        doFind(s?.toString().orEmpty())
+    }
+    override fun beforeTextChanged(
+        s: CharSequence?, st: Int, c: Int, a: Int
+    ) {}
+    override fun onTextChanged(
+        s: CharSequence?, st: Int, b: Int, c: Int
+    ) {}
+})
+
         binding.addressBar.setOnEditorActionListener { _, actionId, event ->
             val isGo = actionId == EditorInfo.IME_ACTION_GO ||
                 (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
