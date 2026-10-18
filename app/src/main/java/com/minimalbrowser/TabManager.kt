@@ -23,7 +23,7 @@ class TabManager(
     private val onTabsChanged: () -> Unit,
     private val onFullscreenShow: (View, WebChromeClient.CustomViewCallback) -> Unit,
     private val onFullscreenHide: () -> Unit,
-    private val onLongPressLink: (String) -> Unit
+    private val onLongPressLink: (String) -> Unit,
     private val onFindResult: (Int, Int) -> Unit
 ) {
 
