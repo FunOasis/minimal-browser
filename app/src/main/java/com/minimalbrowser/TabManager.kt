@@ -441,6 +441,13 @@ fun freezeIdleTabs(isBackgrounded: Boolean): Int {
         tab.client = client
         wv.webViewClient = client
         wv.webChromeClient = TabWebChromeClient(tab)
+        // Find-in-page: only forward counts when this tab is active,
+        // so a background tab's search cannot stomp the visible counter.
+        wv.setFindListener { activeMatchOrdinal, numberOfMatches, _ ->    
+            if (tab === getActive()) {        
+                onFindResult(activeMatchOrdinal, numberOfMatches)    
+            }
+        }
 
         wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
             DownloadHandler.handle(
