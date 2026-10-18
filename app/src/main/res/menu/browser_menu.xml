@@ -12,6 +12,9 @@
     <item
         android:id="@+id/action_add_shortcut"
         android:title="@string/menu_add_shortcut" />
+    <item    
+        android:id="@+id/action_find_in_page"    
+        android:title="@string/menu_find_in_page" />
     <item
         android:id="@+id/action_js"
         android:title="@string/menu_toggle_js" />
