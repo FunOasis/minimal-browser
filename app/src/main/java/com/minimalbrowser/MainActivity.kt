@@ -1324,8 +1324,8 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
         if (url.startsWith("minimal://")) "" else url
 
     private fun isHttpUrl(url: String): Boolean {    
-        val lower = url.lowercase()    
-        return lower.startsWith("http://") || lower.startsWith("https://")
+        val lower = url.lowercase()          // 'I' becomes 'ı' under Turkish locale    
+        return url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
     }
 
     private fun navigate() {
