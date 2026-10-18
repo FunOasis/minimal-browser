@@ -201,6 +201,10 @@ binding.findInput.addTextChangedListener(object : TextWatcher {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (binding.findBar.visibility == View.VISIBLE) {    
+                    hideFindBar()    
+                    return
+                }
                 if (tabManager.isInFullscreen()) {
                     requestExitFullscreen()
                     return
