@@ -37,6 +37,9 @@
         android:id="@+id/action_clear"
         android:title="@string/menu_clear" />
     <item
+        android:id="@+id/action_clear_webview_data"
+        android:title="@string/menu_clear_webview_data" />
+    <item
         android:id="@+id/action_exit"
         android:title="@string/menu_exit" />
 </menu>
