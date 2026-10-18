@@ -57,47 +57,24 @@ class MinimalBrowserApp : Application() {
      * warehouse. This avoids a race where the load coroutine reads the
      * warehouse while the cleanup is still deleting entries.
      */
-    private fun runOneTimeCleanup() {
-        val p = Prefs.get(this)
-        if (p.legacyDefaultsCleaned) return
-
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
+    private fun runOneTimeCleanupThenLoadCosmetics() {
+    CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val p = Prefs.get(this@MinimalBrowserApp)
+            if (!p.legacyDefaultsCleaned) {
                 val store = CosmeticStore.get(this@MinimalBrowserApp)
                 val entries = store.listAll()
-                for (e in entries) {
-                    store.remove(e.url)
-                }
+                for (e in entries) store.remove(e.url)
                 p.legacyDefaultsCleaned = true
-                Log.i(TAG, "Legacy cosmetic warehouse cleared (" +
-                    entries.size + " entries removed)")
-            } catch (t: Throwable) {
-                Log.w(TAG, "Cleanup failed: " + t.message)
             }
+            val raw = CosmeticStore.get(this@MinimalBrowserApp).loadAllRaw()
+            if (raw.isNotEmpty()) CosmeticFilter.updateFrom(raw)
+            else CosmeticFilter.clear()
+        } catch (t: Throwable) {
+            Log.w(TAG, "boot cosmetic init failed: " + t.message)
         }
     }
-
-    /**
-     * Loads whatever cosmetic rules are on disk. On a fresh install
-     * this finds nothing and CosmeticFilter stays on its built-in
-     * fallback selector list.
-     */
-    private fun loadCosmeticsIfPresent() {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val store = CosmeticStore.get(this@MinimalBrowserApp)
-                val raw = store.loadAllRaw()
-                if (raw.isNotEmpty()) {
-                    CosmeticFilter.updateFrom(raw)
-                    Log.i(TAG, "Cosmetic rules loaded from warehouse")
-                } else {
-                    Log.i(TAG, "Cosmetic warehouse empty -- using fallback selectors")
-                }
-            } catch (t: Throwable) {
-                Log.w(TAG, "Cosmetic load failed: " + t.message)
-            }
-        }
-    }
+}
 
     private fun warmUpWebView() {
         try {
