@@ -1298,6 +1298,10 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
         val tabChanged = currentTabId != lastSeenTabId
         lastSeenTabId = currentTabId
 
+        if (tabChanged && binding.findBar.visibility == View.VISIBLE) {    
+            hideFindBar()
+        }
+
         if (binding.addressBar.hasFocus() && !tabChanged) return
         setAddressBarText(displayUrl(url))
         updateBlockCountBadge()
@@ -1313,6 +1317,10 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
         binding.progressBar.progress = 0
         binding.progressBar.visibility = View.VISIBLE
         updateBlockCountBadge()
+        
+        if (binding.findBar.visibility == View.VISIBLE) {    
+            binding.findCount.visibility = View.GONE
+        }
     }
 
     override fun onPageLoadFinished(view: WebView) {
@@ -1322,6 +1330,11 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
         val title = view.title.orEmpty()
         history.record(url, title)
         updateBlockCountBadge()
+        
+        if (binding.findBar.visibility == View.VISIBLE) {    
+            val q = binding.findInput.text.toString()    
+            if (q.isNotEmpty()) doFind(q)
+        }
     }
 
     override fun onPageLoadError(view: WebView?, description: String, url: String?) {
@@ -1355,6 +1368,93 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
     // -------------------------------------------------------------------------
     // Navigation helpers
     // -------------------------------------------------------------------------
+
+    // -------------------------------------------------------------------------
+// Find in page
+// -------------------------------------------------------------------------
+
+private fun showFindBar() {
+    if (binding.findBar.visibility == View.VISIBLE) {
+        binding.findInput.requestFocus()
+        showKeyboard()
+        return
+    }
+
+    binding.topBar.visibility = View.GONE
+    binding.findBar.visibility = View.VISIBLE
+
+    binding.findInput.setText("")
+    binding.findCount.visibility = View.GONE
+    binding.findPrev.isEnabled = false
+    binding.findNext.isEnabled = false
+
+    binding.findInput.requestFocus()
+    // Delay so the view has been laid out before we ask for the IME.
+    binding.findInput.postDelayed({ showKeyboard() }, 100L)
+}
+
+private fun hideFindBar() {
+    if (binding.findBar.visibility != View.VISIBLE) return
+
+    binding.findBar.visibility = View.GONE
+    binding.topBar.visibility = View.VISIBLE
+
+    binding.findCount.visibility = View.GONE
+    binding.findPrev.isEnabled = false
+    binding.findNext.isEnabled = false
+
+    binding.findInput.setText("")
+    tabManager.getActiveWebView()?.clearMatches()
+
+    hideKeyboard()
+    binding.addressBar.clearFocus()
+}
+
+private fun doFind(query: String) {
+    val wv = tabManager.getActiveWebView() ?: return
+    if (query.isEmpty()) {
+        wv.clearMatches()
+        binding.findCount.visibility = View.GONE
+        binding.findPrev.isEnabled = false
+        binding.findNext.isEnabled = false
+        return
+    }
+    wv.findAllAsync(query)
+}
+
+private fun findNext(forward: Boolean) {
+    val wv = tabManager.getActiveWebView() ?: return
+    if (binding.findInput.text.isNullOrEmpty()) return
+    wv.findNext(forward)
+}
+
+private fun updateFindCount(activeMatch: Int, totalMatches: Int) {
+    if (binding.findBar.visibility != View.VISIBLE) return
+
+    if (totalMatches == 0) {
+        binding.findCount.text = getString(R.string.find_no_matches)
+        binding.findCount.setTextColor(getColor(R.color.js_badge_off))
+        binding.findPrev.isEnabled = false
+        binding.findNext.isEnabled = false
+    } else {
+        binding.findCount.text =
+            getString(R.string.find_count_format, activeMatch, totalMatches)
+        binding.findCount.setTextColor(getColor(R.color.text_secondary))
+        binding.findPrev.isEnabled = true
+        binding.findNext.isEnabled = true
+    }
+    binding.findCount.visibility = View.VISIBLE
+}
+
+private fun showKeyboard() {
+    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+    imm?.showSoftInput(binding.findInput, InputMethodManager.SHOW_IMPLICIT)
+}
+
+private fun hideKeyboard() {
+    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+    imm?.hideSoftInputFromWindow(binding.findInput.windowToken, 0)
+}
 
     private fun loadHome() {
         setAddressBarText("")
