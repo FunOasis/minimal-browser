@@ -34,7 +34,7 @@ object DownloadNotifications {
     private const val CHANNEL_ID = "mb_downloads_v2"
     private const val CHANNEL_NAME = "Downloads"
     private const val CHANNEL_DESC = "In-progress and completed file downloads"
-    private const val NOTIFICATION_ID = 0x4D42001
+    private fun idFor(fileName: String): Int = NOTIFICATION_ID + (fileName.hashCode() and 0x00FFFFFF)
 
     fun start(context: Context, fileName: String, totalBytes: Long) {
         ensureChannel(context)
