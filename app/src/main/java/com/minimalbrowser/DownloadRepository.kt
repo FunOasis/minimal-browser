@@ -233,7 +233,7 @@ class DownloadRepository(private val appContext: Context) {
                 }
             }
             LocalDownloadsStore.get(appContext).remove(item.url)
-            return ok || true // the entry is gone from our list either way
+            return ok
         }
 
         var removed = false
