@@ -122,4 +122,9 @@
     <string name="freeze_fg_hint">Non-active tabs not touched for this long are frozen to save CPU.</string>
     <string name="freeze_bg_label">All tabs (background)</string>
     <string name="freeze_bg_hint">When the app is backgrounded, every tab older than this is frozen.</string>
+    <string name="menu_clear_webview_data">Clear browser data</string>
+    <string name="clear_webview_data_title">Clear browser data?</string>
+    <string name="clear_webview_data_message">Removes cache, cookies, site storage, and ends all tabs. Custom filters and site settings are kept.</string>
+    <string name="clear_webview_data_confirm">Clear</string>
+    <string name="clear_webview_data_done">Browser data cleared</string>
 </resources>
