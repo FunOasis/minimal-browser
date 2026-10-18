@@ -100,16 +100,16 @@
   </div>
 
   <script>
-    document.getElementById('sform').addEventListener('submit', function (e) {
-      var v = document.getElementById('q').value.trim();
-      if (!v) { e.preventDefault(); return; }
-      if (/^https?:\/\//i.test(v)) { e.preventDefault(); location.href = v; return; }
-      if (v.indexOf('.') !== -1 && v.indexOf(' ') === -1) {
-        e.preventDefault();
-        location.href = 'https://' + v;
-      }
-    });
-  </script>
+  document.getElementById('sform').addEventListener('submit', function (e) {
+    var v = document.getElementById('q').value.trim();
+    if (!v) { e.preventDefault(); return; }
+    if (/^[a-z][a-z0-9+.\-]*:\/\//i.test(v)) { e.preventDefault(); location.href = v; return; }
+    if (v.indexOf('.') !== -1 && v.indexOf(' ') === -1) {
+      e.preventDefault();
+      location.href = 'https://' + v;
+    }
+  });
+</script>
 
 </body>
 </html>
