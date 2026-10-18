@@ -126,6 +126,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             onFullscreenShow = { view, callback -> enterFullscreen(view, callback) },
             onFullscreenHide = { exitFullscreen() },
             onLongPressLink = { url -> showLinkOptions(url) }
+            onLongPressLink = { url -> showLinkOptions(url) },
+            onFindResult = { active, total -> updateFindCount(active, total) }
         )
 
         binding.swipeRefresh.setOnRefreshListener { tabManager.reloadActive() }
