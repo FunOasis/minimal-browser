@@ -152,6 +152,98 @@
             android:tint="@color/icon_primary" />
     </LinearLayout>
 
+   <!-- ============================================================
+     FIND-IN-PAGE BAR — same rhythm as the topbar
+     ============================================================ -->
+<LinearLayout
+    android:id="@+id/findBar"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingStart="@dimen/topbar_padding_h"
+    android:paddingEnd="@dimen/topbar_padding_h"
+    android:paddingTop="@dimen/topbar_padding_v"
+    android:paddingBottom="@dimen/topbar_padding_v"
+    android:visibility="gone">
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="@dimen/urlbar_height"
+        android:layout_weight="1"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_urlbar"
+        android:addStatesFromChildren="true"
+        android:paddingStart="@dimen/urlbar_padding_start"
+        android:paddingEnd="2dp">
+
+        <EditText
+            android:id="@+id/findInput"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@null"
+            android:hint="@string/find_in_page_hint"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:maxLines="1"
+            android:singleLine="true"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_tertiary"
+            android:textSize="@dimen/text_urlbar"
+            android:importantForAutofill="no" />
+
+        <TextView
+            android:id="@+id/findCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="8dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp"
+            android:visibility="gone"
+            tools:text="3/17"
+            tools:visibility="visible" />
+
+        <ImageButton
+            android:id="@+id/findPrev"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/cd_find_prev"
+            android:padding="6dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_arrow_back"
+            android:tint="@color/icon_tint"
+            android:enabled="false" />
+
+        <ImageButton
+            android:id="@+id/findNext"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/cd_find_next"
+            android:padding="6dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_arrow_forward"
+            android:tint="@color/icon_tint"
+            android:enabled="false" />
+    </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/findClose"
+        android:layout_width="@dimen/icon_button_size"
+        android:layout_height="@dimen/icon_button_size"
+        android:layout_marginStart="@dimen/topbar_gap"
+        android:background="@drawable/bg_icon_glass_rect"
+        android:contentDescription="@string/cd_close_find"
+        android:padding="@dimen/icon_button_padding"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_close_small"
+        android:tint="@color/icon_primary" />
+</LinearLayout> 
+
     <com.google.android.material.progressindicator.LinearProgressIndicator
         android:id="@+id/progressBar"
         android:layout_width="match_parent"
