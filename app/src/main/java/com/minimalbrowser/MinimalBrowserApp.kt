@@ -9,17 +9,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-/**
- * Boot-time warm-up, WebView process setup, and one-time migration.
- *
- * No hardcoded ad-blocking data is loaded. On a fresh install the
- * blocklist and cosmetic warehouses are empty, and the ad blocker is
- * inert until the user supplies subscription URLs.
- *
- * One migration runs on the first launch after upgrading from a build
- * that shipped default EasyList cosmetic URLs: the cosmetic warehouse
- * is wiped, and a flag is set so it never runs again.
- */
 class MinimalBrowserApp : Application() {
 
     override fun onCreate() {
@@ -42,39 +31,41 @@ class MinimalBrowserApp : Application() {
             Log.w(TAG, "WorkManager schedule failed: " + t.message)
         }
 
-        runOneTimeCleanup()
-        loadCosmeticsIfPresent()
+        runOneTimeCleanupThenLoadCosmetics()
     }
 
     /**
-     * Runs once per install on the first launch after this build is
-     * applied. Wipes the cosmetic warehouse that older builds seeded
-     * from hardcoded EasyList URLs. After this, the cosmetic warehouse
-     * is empty until a future UI lets the user add cosmetic lists.
-     *
-     * The flag is checked and set synchronously here, on the
-     * Application's main thread, before any coroutine touches the
-     * warehouse. This avoids a race where the load coroutine reads the
-     * warehouse while the cleanup is still deleting entries.
+     * Runs the legacy-cleanup migration (once) and then loads whatever
+     * cosmetic rules remain on disk. Doing both in a single coroutine
+     * guarantees the load sees the post-cleanup state, eliminating the
+     * race where stale rules get populated before cleanup finishes.
      */
     private fun runOneTimeCleanupThenLoadCosmetics() {
-    CoroutineScope(Dispatchers.IO).launch {
-        try {
-            val p = Prefs.get(this@MinimalBrowserApp)
-            if (!p.legacyDefaultsCleaned) {
-                val store = CosmeticStore.get(this@MinimalBrowserApp)
-                val entries = store.listAll()
-                for (e in entries) store.remove(e.url)
-                p.legacyDefaultsCleaned = true
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val p = Prefs.get(this@MinimalBrowserApp)
+                if (!p.legacyDefaultsCleaned) {
+                    val store = CosmeticStore.get(this@MinimalBrowserApp)
+                    val entries = store.listAll()
+                    for (e in entries) store.remove(e.url)
+                    p.legacyDefaultsCleaned = true
+                    Log.i(TAG, "Legacy cosmetic warehouse cleared (" +
+                        entries.size + " entries removed)")
+                }
+
+                val raw = CosmeticStore.get(this@MinimalBrowserApp).loadAllRaw()
+                if (raw.isNotEmpty()) {
+                    CosmeticFilter.updateFrom(raw)
+                    Log.i(TAG, "Cosmetic rules loaded from warehouse")
+                } else {
+                    CosmeticFilter.clear()
+                    Log.i(TAG, "Cosmetic warehouse empty")
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "boot cosmetic init failed: " + t.message)
             }
-            val raw = CosmeticStore.get(this@MinimalBrowserApp).loadAllRaw()
-            if (raw.isNotEmpty()) CosmeticFilter.updateFrom(raw)
-            else CosmeticFilter.clear()
-        } catch (t: Throwable) {
-            Log.w(TAG, "boot cosmetic init failed: " + t.message)
         }
     }
-}
 
     private fun warmUpWebView() {
         try {
