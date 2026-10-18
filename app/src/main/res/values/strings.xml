@@ -127,4 +127,11 @@
     <string name="clear_webview_data_message">Removes cache, cookies, site storage, and ends all tabs. Custom filters and site settings are kept.</string>
     <string name="clear_webview_data_confirm">Clear</string>
     <string name="clear_webview_data_done">Browser data cleared</string>
+    <string name="menu_find_in_page">Find in page</string>
+    <string name="find_in_page_hint">Find in page</string>
+    <string name="find_no_matches">No matches</string>
+    <string name="find_count_format">%1$d/%2$d</string>
+    <string name="cd_find_prev">Previous match</string>
+    <string name="cd_find_next">Next match</string>
+    <string name="cd_close_find">Close find</string>
 </resources>
