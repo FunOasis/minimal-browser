@@ -525,7 +525,7 @@ fun freezeIdleTabs(isBackgrounded: Boolean): Int {
         // set location.href on the returned window. Without JS
         // the trap never sees the real URL.
         settings.javaScriptEnabled = true
-        settings.supportMultipleWindows = false   // trap must not spawn more traps
+        settings.setSupportMultipleWindows(false)   // trap must not spawn more traps
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
                 v: WebView?,
