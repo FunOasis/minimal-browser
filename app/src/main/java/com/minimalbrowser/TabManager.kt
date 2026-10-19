@@ -1,6 +1,8 @@
 package com.minimalbrowser
 
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 import android.os.Message
 import android.util.Log
 import android.view.View
@@ -505,29 +507,58 @@ fun freezeIdleTabs(isBackgrounded: Boolean): Int {
         }
 
         override fun onCreateWindow(
-            view: WebView?,
-            isDialog: Boolean,
-            isUserGesture: Boolean,
-            resultMsg: Message?
-        ): Boolean {
-            val msg = resultMsg ?: return false
-            val trap = WebView(activity).apply {
-                webViewClient = object : WebViewClient() {
-                    override fun shouldOverrideUrlLoading(
-                        v: WebView?,
-                        request: WebResourceRequest?
-                    ): Boolean {
-                        val url = request?.url?.toString().orEmpty()
-                        v?.post { runCatching { v.destroy() } }
-                        if (url.isNotBlank()) create(url = url, makeActive = true)
-                        return true
-                    }
+    view: WebView?,
+    isDialog: Boolean,
+    isUserGesture: Boolean,
+    resultMsg: Message?
+): Boolean {
+    val msg = resultMsg ?: return false
+
+    // Popup blocker: only allow window opens triggered by a
+    // real user gesture (tap on a target="_blank" link, or a
+    // click handler calling window.open). Automatic opens get
+    // dropped silently — no tab, no current-tab navigation.
+    if (!isUserGesture) return true
+
+    val trap = WebView(activity).apply {
+        // JS must be on: some ads open about:blank first, then
+        // set location.href on the returned window. Without JS
+        // the trap never sees the real URL.
+        settings.javaScriptEnabled = true
+        settings.supportMultipleWindows = false   // trap must not spawn more traps
+        webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                v: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
+                val url = request?.url?.toString().orEmpty()
+
+                // Site opened a blank window and will navigate
+                // it via JS. Let the trap load about:blank; the
+                // real URL will fire shouldOverrideUrlLoading a
+                // moment later.
+                if (url.isBlank() || url == "about:blank") {
+                    return false
                 }
+
+                v?.post { runCatching { v.destroy() } }
+                create(url = url, makeActive = true)
+                return true
             }
-            (msg.obj as? WebView.WebViewTransport)?.webView = trap
-            msg.sendToTarget()
-            return true
         }
+    }
+
+    // Safety net: if the page opens a blank window and never
+    // navigates it, destroy the trap after 5 seconds so we
+    // don't leak a WebView.
+    Handler(Looper.getMainLooper()).postDelayed({
+        runCatching { trap.destroy() }
+    }, 5_000L)
+
+    (msg.obj as? WebView.WebViewTransport)?.webView = trap
+    msg.sendToTarget()
+    return true
+}
 
         override fun onShowCustomView(view: View, callback: CustomViewCallback) {
             if (fullscreenActive) {
