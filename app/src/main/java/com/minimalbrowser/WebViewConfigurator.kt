@@ -72,6 +72,16 @@ fun applyUserAgent(context: Context, webView: WebView, desktop: Boolean) {
         s.useWideViewPort      = true
         s.builtInZoomControls  = true
         s.displayZoomControls  = false
+        // Route target="_blank" links and window.open() through
+// WebChromeClient.onCreateWindow so TabManager can open them in
+// a real new tab instead of navigating the current one.
+// Without supportMultipleWindows=true, WebView silently treats
+// target="_blank" as target="_self" — every ad popup then
+// pollutes the current tab's navigation history.
+        s.setSupportMultipleWindows(true)
+// Only allow window.open() calls that originate from a user
+// gesture (click/tap). Automatic popups get dropped.
+        s.javaScriptCanOpenWindowsAutomatically = false
 
         // --- Cache -------------------------------------------------------
         s.cacheMode = WebSettings.LOAD_DEFAULT
