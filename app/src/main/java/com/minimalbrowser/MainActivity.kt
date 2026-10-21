@@ -1350,14 +1350,16 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
             binding.findCount.visibility = View.GONE
         }
     }
-
+    
     override fun onPageLoadFinished(view: WebView) {
         if (view !== tabManager.getActiveWebView()) return
         binding.swipeRefresh.isRefreshing = false
         val url = view.url ?: return
         val title = view.title.orEmpty()
-        history.record(url, title)
+        val tab = tabManager.findByWebView(view)
+        history.record(url, title, tab?.favicon)
         updateBlockCountBadge()
+    }
         
         if (binding.findBar.visibility == View.VISIBLE) {    
             val q = binding.findInput.text.toString()    
