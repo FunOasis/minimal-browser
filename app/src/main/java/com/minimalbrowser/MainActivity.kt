@@ -627,6 +627,19 @@ if (restoreUrls != null) {
 
         val tabsItem = popup.menu.findItem(R.id.action_tabs)
         tabsItem?.title = getString(R.string.menu_tabs, tabManager.count())
+                
+        val bmItem = popup.menu.findItem(R.id.action_bookmark_this_page)
+        if (bmItem != null) {
+            val currentUrl = tabManager.getActiveWebView()?.url
+            if (currentUrl.isNullOrBlank() || currentUrl.startsWith("minimal://")) {
+                bmItem.isEnabled = false
+                bmItem.title = getString(R.string.menu_bookmark_this_page)
+            } else if (bookmarks.contains(currentUrl)) {
+                bmItem.title = getString(R.string.menu_remove_bookmark)
+            } else {
+                bmItem.title = getString(R.string.menu_bookmark_this_page)
+            }
+        }
 
         val host = currentHost()
 
