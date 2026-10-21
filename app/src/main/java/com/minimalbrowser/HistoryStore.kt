@@ -2,11 +2,17 @@ package com.minimalbrowser
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.LruCache
+import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
 
 /**
  * Bounded, deduplicated visit history.
  *
- * Serialised as newline-separated records. Current format:
+ * Serialised as newline-separated records:
  *
  *     url|title|lastVisitedMs|visitCount
  *
@@ -14,13 +20,22 @@ import android.content.SharedPreferences
  * correctly: they load with lastVisited=0 and visitCount=1 and are
  * rewritten in the new format the next time the same URL is recorded.
  *
- * The address-bar suggestion code in MainActivity only reads url and
- * title, so bumping the record format does not affect it.
+ * Favicons live in filesDir/history_icons/ as PNG files keyed by the
+ * SHA-1 of the URL. Deleted whenever the corresponding entry is
+ * removed, cleared, or aged out by clearOlderThan(). An in-memory
+ * LruCache cuts the disk hit on repeated list scrolls to near zero.
  */
 class HistoryStore private constructor(context: Context) {
 
     private val sp: SharedPreferences =
         context.getSharedPreferences("minimal_browser_history", Context.MODE_PRIVATE)
+
+    private val iconsDir: File = File(context.filesDir, "history_icons").apply {
+        if (!exists()) mkdirs()
+    }
+
+    /** Small in-memory bitmap cache so list scrolling does not re-read disk. */
+    private val iconCache = object : LruCache<String, Bitmap>(100) {}
 
     data class Entry(
         val url: String,
@@ -30,7 +45,7 @@ class HistoryStore private constructor(context: Context) {
     )
 
     @Synchronized
-    fun record(url: String, title: String) {
+    fun record(url: String, title: String, favicon: Bitmap? = null) {
         if (url.isBlank()) return
         if (url.startsWith(Prefs.HOME_URL)) return
         if (!url.startsWith("http://") && !url.startsWith("https://")) return
@@ -40,6 +55,11 @@ class HistoryStore private constructor(context: Context) {
         val existing = current.firstOrNull { it.url == url }
         current.removeAll { it.url == url }
 
+        // Persist the favicon if we have a fresh one. Never overwrite a
+        // previously stored icon with nothing — a transient null favicon
+        // (slow icon load, redirect chain) would otherwise destroy it.
+        if (favicon != null) saveFavicon(url, favicon)
+
         val newTitle = title.ifBlank {
             existing?.title?.takeIf { it.isNotBlank() } ?: prettyHost(url)
         }
@@ -47,6 +67,11 @@ class HistoryStore private constructor(context: Context) {
         current.add(0, Entry(url, newTitle, now, newCount))
 
         if (current.size > MAX_ENTRIES) {
+            val removed = current.subList(MAX_ENTRIES, current.size).toList()
+            for (e in removed) {
+                deleteFavicon(e.url)
+                iconCache.remove(e.url)
+            }
             current.subList(MAX_ENTRIES, current.size).clear()
         }
 
@@ -68,20 +93,123 @@ class HistoryStore private constructor(context: Context) {
     @Synchronized
     fun remove(url: String) {
         val current = loadAll().toMutableList()
-        if (current.removeAll { it.url == url }) saveAll(current)
+        if (current.removeAll { it.url == url }) {
+            saveAll(current)
+            deleteFavicon(url)
+            iconCache.remove(url)
+        }
     }
 
     @Synchronized
     fun clear() {
         sp.edit().remove(KEY_HISTORY).apply()
+        try { iconsDir.listFiles()?.forEach { it.delete() } } catch (_: Throwable) {}
+        iconCache.evictAll()
     }
 
     /**
-     * Parses one line. Handles both the legacy 2-field format and the
-     * current 4-field format. Titles may contain pipes (rare but legal
-     * in HTML titles); we therefore treat only the LAST two fields as
-     * metadata in the new format.
+     * Removes every entry whose lastVisited is older than `days` days.
+     *
+     * Entries with lastVisited == 0 (legacy records from before the
+     * timestamp upgrade, or imported blobs) are preserved on purpose:
+     * they represent history the user has never seen a "recent" timestamp
+     * for, so a periodic-prune should not delete them silently. They can
+     * still be removed by "Clear all".
+     *
+     * Returns the number of entries removed.
      */
+    @Synchronized
+    fun clearOlderThan(days: Int): Int {
+        if (days <= 0) return 0
+        val cutoff = System.currentTimeMillis() - (days * 24L * 60L * 60L * 1000L)
+        val current = loadAll().toMutableList()
+        val toRemove = current.filter { it.lastVisited > 0L && it.lastVisited < cutoff }
+        if (toRemove.isEmpty()) return 0
+        for (e in toRemove) {
+            deleteFavicon(e.url)
+            iconCache.remove(e.url)
+        }
+        current.removeAll(toRemove)
+        saveAll(current)
+        return toRemove.size
+    }
+
+    /**
+     * Returns the cached favicon for a URL, or null if none has been
+     * stored. Safe to call from a background thread; the in-memory
+     * cache is LruCache-synchronised internally.
+     */
+    fun loadFavicon(url: String): Bitmap? {
+        iconCache.get(url)?.let { return it }
+        return try {
+            val f = iconFile(url)
+            if (!f.exists()) return null
+            val bmp = BitmapFactory.decodeFile(f.absolutePath) ?: return null
+            iconCache.put(url, bmp)
+            bmp
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Favicon storage
+    // ------------------------------------------------------------------
+
+    private fun iconFile(url: String): File =
+        File(iconsDir, sha1Hex(url) + ".png")
+
+    private fun saveFavicon(url: String, src: Bitmap) {
+        try {
+            val scaled = resizeFavicon(src, 64)
+            FileOutputStream(iconFile(url)).use { out ->
+                scaled.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            iconCache.put(url, scaled)
+        } catch (_: Throwable) {
+            // Silent. A missing favicon is a cosmetic loss, not a
+            // correctness issue, and an exception here would abort the
+            // whole record() call.
+        }
+    }
+
+    private fun deleteFavicon(url: String) {
+        try { iconFile(url).delete() } catch (_: Throwable) {}
+    }
+
+    /**
+     * Cap the stored icon at maxPx on the longest edge. WebView favicons
+     * range from 16x16 to 256x256 depending on the site; storing them
+     * uncapped would mean 50-100 KB per entry for a handful of sites
+     * that serve large icons. Returns the original bitmap unchanged if
+     * it is already within bounds — callers must NOT recycle the result.
+     */
+    private fun resizeFavicon(src: Bitmap, maxPx: Int): Bitmap {
+        if (src.width <= maxPx && src.height <= maxPx) return src
+        val scale = minOf(
+            maxPx.toFloat() / src.width,
+            maxPx.toFloat() / src.height
+        )
+        val w = (src.width * scale).toInt().coerceAtLeast(1)
+        val h = (src.height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(src, w, h, true)
+    }
+
+    private fun sha1Hex(s: String): String {
+        val bytes = MessageDigest.getInstance("SHA-1").digest(s.toByteArray())
+        val sb = StringBuilder(40)
+        for (b in bytes) {
+            val v = b.toInt() and 0xFF
+            sb.append(Character.forDigit(v shr 4, 16))
+            sb.append(Character.forDigit(v and 0x0F, 16))
+        }
+        return sb.toString()
+    }
+
+    // ------------------------------------------------------------------
+    // Serialisation
+    // ------------------------------------------------------------------
+
     private fun parseLine(line: String): Entry? {
         val parts = line.split('|')
         return when {
