@@ -57,22 +57,18 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     private lateinit var blocker: AdBlocker
     private lateinit var prefs: Prefs
     private lateinit var tabManager: TabManager
-    private lateinit var history: HistoryStore
-
+    private lateinit var history: HistoryStore        
+    private lateinit var bookmarks: BookmarkStore
     private var lastSeenTabId: Long = -1L
-
     private var exiting: Boolean = false
     private var isBackgrounded: Boolean = false
-
     private var fullscreenView: View? = null
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
-
     private var suggestionPopup: PopupWindow? = null
     private var suggestionList: ListView? = null
     private var suggestionAdapter: ArrayAdapter<String>? = null
     private var currentSuggestions: List<HistoryStore.Entry> = emptyList()
     private var suppressSuggestionRefresh = false
-
     private val freezeHandler = Handler(Looper.getMainLooper())
     private val freezeTick = object : Runnable {
         override fun run() {
