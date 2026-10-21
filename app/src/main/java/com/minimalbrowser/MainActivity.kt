@@ -98,7 +98,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
         blocker = AdBlocker.get(this)
         prefs   = Prefs.get(this)
-        history = HistoryStore.get(this)
+        history = HistoryStore.get(this)                
+        bookmarks = BookmarkStore.get(this)
 
         tabManager = TabManager(
             activity = this,
