@@ -655,19 +655,11 @@ if (restoreUrls != null) {
             } else {
                 desktopItem.title = getString(R.string.menu_desktop_site)
             }
-        }
-                
-        // Exit is the only destructive action in the overflow menu; give
-        // it the theme's danger red so it reads as "this closes everything".
-        popup.menu.findItem(R.id.action_exit)?.let { exitItem ->
-            exitItem.title = SpannableString(getString(R.string.menu_exit)).apply {
-                setSpan(
-                    ForegroundColorSpan(getColor(R.color.danger)),
-                    0, length,
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
-            }
-        }
+        }                        
+        // Destructive actions get the danger red so they stand out from
+        // everyday menu items in the black-glass popup.
+        colorMenuItemDanger(popup.menu, R.id.action_exit)
+        colorMenuItemDanger(popup.menu, R.id.action_clear_webview_data)
 
         popup.setOnMenuItemClickListener { item -> handleMenu(item) }
         popup.show()
