@@ -12,8 +12,11 @@
     <item
         android:id="@+id/action_add_shortcut"
         android:title="@string/menu_add_shortcut" />
-    <item    
-        android:id="@+id/action_find_in_page"    
+    <item
+        android:id="@+id/action_bookmark_this_page"
+        android:title="@string/menu_bookmark_this_page" />
+    <item
+        android:id="@+id/action_find_in_page"
         android:title="@string/menu_find_in_page" />
     <item
         android:id="@+id/action_js"
@@ -35,10 +38,13 @@
         android:title="@string/menu_reset_site_overrides" />
     <item
         android:id="@+id/action_downloads"
-        android:title="@string/menu_downloads" />        
+        android:title="@string/menu_downloads" />
     <item
         android:id="@+id/action_history"
         android:title="@string/menu_history" />
+    <item
+        android:id="@+id/action_bookmarks"
+        android:title="@string/menu_bookmarks" />
     <item
         android:id="@+id/action_clear"
         android:title="@string/menu_clear" />
