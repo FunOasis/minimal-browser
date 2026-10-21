@@ -25,6 +25,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.minimalbrowser.databinding.ActivityHistoryBinding
 import com.minimalbrowser.databinding.ItemHistoryEntryBinding
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -303,7 +304,7 @@ class HistoryActivity : AppCompatActivity() {
                     // job will not reach here at all — this check exists
                     // for the case where the coroutine completes cleanly
                     // but the adapter has since reassigned the slot.
-                    if (icon != null && bindingAdapterPosition == position) {
+                    if (icon != null && isActive) {
                         b.rowIcon.imageTintList = null
                         b.rowIcon.alpha = 1.0f
                         b.rowIcon.setImageBitmap(icon)
