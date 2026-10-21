@@ -656,6 +656,18 @@ if (restoreUrls != null) {
                 desktopItem.title = getString(R.string.menu_desktop_site)
             }
         }
+                
+        // Exit is the only destructive action in the overflow menu; give
+        // it the theme's danger red so it reads as "this closes everything".
+        popup.menu.findItem(R.id.action_exit)?.let { exitItem ->
+            exitItem.title = SpannableString(getString(R.string.menu_exit)).apply {
+                setSpan(
+                    ForegroundColorSpan(getColor(R.color.danger)),
+                    0, length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
 
         popup.setOnMenuItemClickListener { item -> handleMenu(item) }
         popup.show()
