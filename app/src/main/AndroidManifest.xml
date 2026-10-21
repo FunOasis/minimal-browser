@@ -48,6 +48,12 @@
             android:exported="false"
             android:label="@string/downloads_title"
             android:parentActivityName=".MainActivity" />
+        
+        <activity
+            android:name=".HistoryActivity"
+            android:exported="false"
+            android:label="@string/history_title"
+            android:parentActivityName=".MainActivity" />
 
     </application>
 
