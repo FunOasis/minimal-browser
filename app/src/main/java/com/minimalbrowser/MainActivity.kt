@@ -765,6 +765,13 @@ if (restoreUrls != null) {
             startActivity(Intent(this, HistoryActivity::class.java))
             true
         }
+                
+        R.id.action_bookmark_this_page -> { toggleCurrentBookmark(); true }
+
+        R.id.action_bookmarks -> {
+            startActivity(Intent(this, BookmarksActivity::class.java))
+            true
+        }
 
         R.id.action_clear -> {
             tabManager.tabs.forEach { tab ->
@@ -805,6 +812,22 @@ if (restoreUrls != null) {
             onLastTabCloseRequested = {
                 showExitConfirm()
             }
+        ).show()
+    }
+        
+    private fun toggleCurrentBookmark() {
+        val wv = tabManager.getActiveWebView() ?: return
+        val url = wv.url ?: return
+        if (url.isBlank() || url.startsWith("minimal://")) {
+            Toast.makeText(this, R.string.bookmarks_nothing_here, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val title = wv.title.orEmpty()
+        val nowBookmarked = bookmarks.toggle(url, title)
+        Toast.makeText(
+            this,
+            if (nowBookmarked) R.string.bookmark_added else R.string.bookmark_removed,
+            Toast.LENGTH_SHORT
         ).show()
     }
 
