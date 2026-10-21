@@ -15,6 +15,9 @@ import android.os.Looper
 import android.text.Editable
 import android.text.TextUtils
 import android.text.TextWatcher
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.view.ContextThemeWrapper
 import android.view.KeyEvent
 import android.view.MenuItem
