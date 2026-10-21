@@ -664,6 +664,23 @@ if (restoreUrls != null) {
         popup.setOnMenuItemClickListener { item -> handleMenu(item) }
         popup.show()
     }
+    
+    /**
+     * Recolour a menu item's title to the theme danger red. Preserves
+     * the original CharSequence so dynamic titles (like "Tabs (3)")
+     * still carry their content; only the colour is overridden.
+     */
+    private fun colorMenuItemDanger(menu: android.view.Menu, itemId: Int) {
+        menu.findItem(itemId)?.let { item ->
+            item.title = SpannableString(item.title).apply {
+                setSpan(
+                    ForegroundColorSpan(getColor(R.color.danger)),
+                    0, length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+        }
+    }
 
     private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {
         R.id.action_home -> { loadHome(); true }
