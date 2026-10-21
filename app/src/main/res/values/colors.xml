@@ -29,4 +29,6 @@
     <color name="footer_text">#5C5C5C</color>
 
     <color name="js_badge_off">#FF6B6B</color>
+    
+    <color name="danger">#FF6B6B</color>
 </resources>
