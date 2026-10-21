@@ -730,6 +730,11 @@ if (restoreUrls != null) {
             true
         }
 
+        R.id.action_history -> {
+            startActivity(Intent(this, HistoryActivity::class.java))
+            true
+        }
+
         R.id.action_clear -> {
             tabManager.tabs.forEach { tab ->
                 tab.webView?.clearHistory()
