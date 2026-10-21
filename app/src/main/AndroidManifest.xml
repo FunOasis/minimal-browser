@@ -54,6 +54,12 @@
             android:exported="false"
             android:label="@string/history_title"
             android:parentActivityName=".MainActivity" />
+                
+        <activity
+            android:name=".BookmarksActivity"
+            android:exported="false"
+            android:label="@string/bookmarks_title"
+            android:parentActivityName=".MainActivity" />
 
     </application>
 
