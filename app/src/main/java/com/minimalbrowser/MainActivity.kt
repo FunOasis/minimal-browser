@@ -497,55 +497,166 @@ if (restoreUrls != null) {
     // -------------------------------------------------------------------------
     // Suggestions
     // -------------------------------------------------------------------------
-
+    
     private fun maybeShowSuggestions(query: String) {
-        val q = query.trim().lowercase()
-        if (q.isEmpty()) {
-            dismissSuggestions()
-            return
-        }
+    val q = query.trim().lowercase()
+    if (q.isEmpty()) {
+        dismissSuggestions()
+        return
+    }
 
-        val entries = history.loadAll()
-        val filtered = entries.asSequence()
-            .filter { e ->
-                e.url.lowercase().contains(q) ||
-                    e.title.lowercase().contains(q)
-            }
-            .take(MAX_VISIBLE_SUGGESTIONS)
-            .toList()
+    val entries = history.loadAll()
+    if (entries.isEmpty()) {
+        dismissSuggestions()
+        return
+    }
 
-        if (filtered.isEmpty()) {
-            dismissSuggestions()
-            return
-        }
+    // Score every entry. Lower is better; -1 means "no match".
+    val scored = ArrayList<Pair<HistoryStore.Entry, Int>>(entries.size)
+    for (e in entries) {
+        val s = scoreMatch(e, q)
+        if (s >= 0) scored.add(Pair(e, s))
+    }
+    if (scored.isEmpty()) {
+        dismissSuggestions()
+        return
+    }
 
-        currentSuggestions = filtered
+    // Prefer prefix-tier matches (scores 0-3). Fall back to loose
+    // contains-tier matches (4-6) only when there are no prefix
+    // matches at all. This is what stops "com" from surfacing
+    // every ".com" site in history: "comicbooks.net" scores 0
+    // (non-TLD label prefix), so amazon.com / google.com stay out.
+    val prefixThreshold = 3
+    val prefix = scored.filter { it.second <= prefixThreshold }
+    val pool = if (prefix.isNotEmpty()) prefix else scored
 
-        val labels = filtered.map { e ->
-            if (e.title.isBlank()) e.url else e.title + "\n" + e.url
-        }
+    val ranked = pool.sortedWith(
+        compareBy<Pair<HistoryStore.Entry, Int>> { it.second }
+            .thenByDescending { it.first.lastVisited }
+            .thenByDescending { it.first.visitCount }
+    )
 
-        if (suggestionPopup == null) {
-            buildSuggestionsPopup()
-        }
-        suggestionAdapter?.clear()
-        suggestionAdapter?.addAll(labels)
-        suggestionAdapter?.notifyDataSetChanged()
+    val filtered = ranked.take(MAX_VISIBLE_SUGGESTIONS).map { it.first }
+    if (filtered.isEmpty()) {
+        dismissSuggestions()
+        return
+    }
 
-        val popup = suggestionPopup ?: return
-        if (popup.isShowing) {
-            popup.update(
-                binding.urlPill,
-                binding.urlPill.width,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        } else {
-            popup.width = binding.urlPill.width
-            popup.height = ViewGroup.LayoutParams.WRAP_CONTENT
-            popup.showAsDropDown(binding.urlPill, 0, 4)
+    currentSuggestions = filtered
+
+    val labels = filtered.map { e ->
+        if (e.title.isBlank()) e.url else e.title + "\n" + e.url
+    }
+
+    if (suggestionPopup == null) {
+        buildSuggestionsPopup()
+    }
+    suggestionAdapter?.clear()
+    suggestionAdapter?.addAll(labels)
+    suggestionAdapter?.notifyDataSetChanged()
+
+    val popup = suggestionPopup ?: return
+    if (popup.isShowing) {
+        popup.update(
+            binding.urlPill,
+            binding.urlPill.width,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    } else {
+        popup.width = binding.urlPill.width
+        popup.height = ViewGroup.LayoutParams.WRAP_CONTENT
+        popup.showAsDropDown(binding.urlPill, 0, 4)
+    }
+}
+
+/**
+ * Rank a history entry against the text typed in the URL bar.
+ *
+ * Returns a score where LOWER is a better match, or -1 for "no match".
+ * The TLD of the host (the "com" in "amazon.com") is deliberately
+ * excluded from all matching, so typing "com" does not list every
+ * .com site — it lists sites whose *name* starts with "com"
+ * (comicbooks.net, company.com, ...).
+ *
+ *   0  a non-TLD host label starts with q     (comicbooks.net -> "com")
+ *   1  the whole host starts with q
+ *   2  a URL path segment starts with q
+ *   3  a title word starts with q
+ *   4  a non-TLD host label contains q
+ *   5  the URL path contains q
+ *   6  the title contains q
+ */
+private fun scoreMatch(entry: HistoryStore.Entry, q: String): Int {
+    if (q.isEmpty()) return -1
+    val url = entry.url.lowercase()
+    val title = entry.title.lowercase()
+
+    // If the query already looks like a URL fragment ("example.com",
+    // "https://..."), match the URL string directly. Preserves typing
+    // whole addresses.
+    val looksLikeUrl = q.contains("://") || (q.length >= 4 && q.contains('.'))
+    if (looksLikeUrl) {
+        val urlNoScheme = url.substringAfter("://", url)
+        if (url == q || urlNoScheme == q) return 0
+        if (url.startsWith(q) || urlNoScheme.startsWith(q)) return 1
+        if (url.contains(q)) return 2
+        return -1
+    }
+
+    val host = try {
+        java.net.URI(url).host?.lowercase()
+    } catch (_: Exception) {
+        null
+    } ?: return -1
+
+    val labels = host.split('.')
+    // Drop the TLD (last label) from prefix/contains checks so a
+    // query of "com" is not treated as a match on "amazon.com".
+    val nonTldLabels = if (labels.size > 1) labels.dropLast(1) else labels
+
+    // 0: any non-TLD host label starts with q
+    for (label in nonTldLabels) {
+        if (label.isNotEmpty() && label.startsWith(q)) return 0
+    }
+
+    // 1: whole host starts with q
+    if (host.startsWith(q)) return 1
+
+    // 2: any path/query segment starts with q
+    val urlNoScheme = url.substringAfter("://", url)
+    val slashIdx = urlNoScheme.indexOf('/')
+    if (slashIdx >= 0) {
+        val path = urlNoScheme.substring(slashIdx)
+        for (seg in path.split('/', '?', '&', '=', '#', ';')) {
+            if (seg.isNotEmpty() && seg.startsWith(q)) return 2
         }
     }
 
+    // 3: title starts with q, or any title word starts with q
+    if (title.isNotEmpty() && title.startsWith(q)) return 3
+    for (word in title.split(' ', '-', '_', '/', '.', ',', '(', ')', '[', ']', ':', '|')) {
+        if (word.isNotEmpty() && word.startsWith(q)) return 3
+    }
+
+    // 4: any non-TLD host label contains q
+    for (label in nonTldLabels) {
+        if (label.isNotEmpty() && label.contains(q)) return 4
+    }
+
+    // 5: URL path contains q
+    if (slashIdx >= 0) {
+        val path = urlNoScheme.substring(slashIdx)
+        if (path.contains(q)) return 5
+    }
+
+    // 6: title contains q
+    if (title.contains(q)) return 6
+
+    // No match. In particular a TLD-only occurrence (the ".com"
+    // in "amazon.com") is not a match here.
+    return -1
+}
     private fun buildSuggestionsPopup() {
         val listView = ListView(this).apply {
             divider = ColorDrawable(Color.parseColor("#1AFFFFFF"))
