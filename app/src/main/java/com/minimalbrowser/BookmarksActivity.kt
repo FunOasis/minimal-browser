@@ -231,7 +231,7 @@ class BookmarksActivity : AppCompatActivity() {
         }
 
         override fun onBindViewHolder(holder: VH, position: Int) {
-            holder.bind(items[position], position)
+            holder.bind(items[position])
         }
 
         override fun getItemCount(): Int = items.size
