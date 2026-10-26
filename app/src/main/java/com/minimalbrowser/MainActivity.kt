@@ -1550,10 +1550,10 @@ private fun hideKeyboard() {
             "https://search.brave.com/search?q=" + URLEncoder.encode(input, "UTF-8")
         else -> "https://" + input
     }
-
+    
     private fun errorPageHtml(description: String, url: String?): String {
-        val safeDesc = description.replace("<", "&lt;").replace("&", "&amp;")
-        val safeUrl  = (url ?: "").replace("<", "&lt;").replace("&", "&amp;")
+        val safeDesc = description.replace("&", "&amp;").replace("<", "&lt;")
+        val safeUrl  = (url ?: "").replace("&", "&amp;").replace("<", "&lt;")
         return "<!DOCTYPE html>" +
             "<html><head>" +
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
