@@ -360,12 +360,12 @@ if (restoreUrls != null) {
         tabManager.getActiveWebView()?.pauseTimers()
         super.onPause()
     }
-
+    
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             tabManager.trimAllCaches()
-            tabManager.freezeIdleTabs(isBackgrounded = false)
+            tabManager.freezeIdleTabs(isBackgrounded = isBackgrounded)
         }
     }
 
