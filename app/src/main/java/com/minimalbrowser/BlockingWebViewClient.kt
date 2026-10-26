@@ -18,6 +18,7 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import java.io.ByteArrayInputStream
 import java.net.URI
+import java.util.concurrent.atomic.AtomicInteger
 
 interface BrowserUiListener {
     fun onUrlChanged(view: WebView, url: String)
@@ -72,11 +73,13 @@ class BlockingWebViewClient(
 
     /**
      * Count of subresource requests blocked on the current top-level
-     * navigation. Reset in onPageStarted for each main-frame load.
+     * navigation. Incremented concurrently from multiple WebView
+     * internal threads; AtomicInteger keeps it correct without locks.
      */
-    @Volatile
-    var blockedCount: Int = 0
-        private set
+    private val blockedCounter = AtomicInteger(0)
+
+    val blockedCount: Int
+        get() = blockedCounter.get()
 
     private val prefs: Prefs by lazy { Prefs.get(appContext) }
 
@@ -88,7 +91,7 @@ class BlockingWebViewClient(
         if (request.isForMainFrame && url.startsWith(HOME_URL)) return serveHomePage()
         if (request.isForMainFrame) return null
         if (blocker.isBlocked(url)) {
-            blockedCount = blockedCount + 1
+            blockedCounter.incrementAndGet()
             return blockedResponse()
         }
         return null
@@ -115,20 +118,6 @@ class BlockingWebViewClient(
                     }
                     val cleaned = UrlCleaner.clean(uri.toString(), prefs.removeParams)
                     if (cleaned != uri.toString()) {
-                        // CRITICAL: do NOT call view.loadUrl() here
-                        // synchronously. Doing so re-enters the
-                        // WebView's navigation pipeline while it is
-                        // still processing the current attempt, which
-                        // deadlocks the renderer. Symptom: the URL
-                        // commits (address bar updates) but the
-                        // rendered frame stays on the previous page,
-                        // and back/forward/refresh all freeze because
-                        // they queue into the same stuck pipeline.
-                        //
-                        // Posting defers the load to the next UI thread
-                        // iteration, after the current navigation
-                        // attempt has fully unwound. Returning true
-                        // cancels the original attempt.
                         view.post {
                             try { view.loadUrl(cleaned) } catch (_: Throwable) {}
                         }
@@ -214,7 +203,7 @@ class BlockingWebViewClient(
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
         if (view == null) return
-        blockedCount = 0
+        blockedCounter.set(0)
         BlobDownloadHelper.injectCapture(view, url)
         ui.onPageLoadStarted(view)
         if (url != null) ui.onUrlChanged(view, url)
