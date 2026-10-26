@@ -284,7 +284,7 @@ class HistoryActivity : AppCompatActivity() {
 
             private var loadJob: Job? = null
 
-            fun bind(entry: HistoryStore.Entry, position: Int) {
+            fun bind(entry: HistoryStore.Entry) {
                 // Cancel any prior favicon load for this recycled view.
                 loadJob?.cancel()
 
