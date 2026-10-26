@@ -241,7 +241,7 @@ class BookmarksActivity : AppCompatActivity() {
 
             private var loadJob: Job? = null
 
-            fun bind(entry: BookmarkStore.Entry, position: Int) {
+            fun bind(entry: BookmarkStore.Entry) {
                 loadJob?.cancel()
 
                 b.rowIcon.alpha = 0.65f
