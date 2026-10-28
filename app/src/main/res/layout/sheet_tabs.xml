@@ -41,12 +41,25 @@
                 android:tint="@color/text_secondary" />
         </LinearLayout>
 
-        <LinearLayout
-            android:id="@+id/tabRows"
+        <!-- Scrollable tab grid. With many tabs this scrolls; with
+             few it shrinks to fit. The height cap is applied at
+             runtime from TabSwitcherSheet.show() so the header and
+             "+ New tab" button never go off-screen. -->
+        <ScrollView
+            android:id="@+id/tabRowsScroll"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:orientation="vertical" />
+            android:overScrollMode="ifContentScrolls"
+            android:fillViewport="false"
+            android:scrollbars="vertical">
+
+            <LinearLayout
+                android:id="@+id/tabRows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
 
         <TextView
             android:id="@+id/newTabButton"
