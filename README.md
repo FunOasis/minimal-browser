@@ -5,7 +5,7 @@ A small, fast Android WebView browser with host-based ad blocking, subscription-
 ## Features
 
 **Browsing**
-- Multi-tab UI (up to 6 live tabs, LRU eviction)
+- Multi-tab UI (up to 10 live tabs, LRU eviction)
 - Auto-freeze inactive tabs to save memory and battery
 - Session restore (survives app kill, reboot, and swipe-from-recents)
 - Desktop mode (per-host User-Agent switching)
