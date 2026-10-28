@@ -896,6 +896,8 @@ private fun scoreMatch(entry: HistoryStore.Entry, q: String): Int {
             true
         }
 
+        R.id.action_about -> { showAboutDialog(); true }
+
         R.id.action_clear_webview_data -> {    
             confirmClearWebViewData()    
             true
@@ -908,10 +910,40 @@ private fun scoreMatch(entry: HistoryStore.Entry, q: String): Int {
             true
         }
 
-        else -> false
+            else -> false
+}
+
+private fun showAboutDialog() {
+    val view = layoutInflater.inflate(R.layout.dialog_about, null)
+    val versionView = view.findViewById<TextView>(R.id.aboutWebViewVersion)
+    val copyrightView = view.findViewById<TextView>(R.id.aboutCopyright)
+
+    val webViewVersion = try {
+        androidx.webkit.WebViewCompat.getCurrentWebViewPackage(this)
+            ?.versionName
+            ?: "unknown"
+    } catch (_: Throwable) {
+        "unknown"
+    }
+    versionView.text = getString(R.string.about_webview_version, webViewVersion)
+
+    val dialog = MaterialAlertDialogBuilder(this)
+        .setView(view)
+        .setPositiveButton(android.R.string.ok, null)
+        .create()
+
+    copyrightView.setOnClickListener {
+        dialog.dismiss()
+        tabManager.create(
+            url = "https://github.com/FunOasis/minimal-browser/",
+            makeActive = true
+        )
     }
 
-    private fun showTabSwitcher() {
+    dialog.show()
+}
+
+private fun showTabSwitcher() {
         TabSwitcherSheet(
             context = this,
             tabManager = tabManager,
