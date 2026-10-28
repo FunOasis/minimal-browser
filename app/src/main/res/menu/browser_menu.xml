@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:id="@+id/action_home"
+    <item    
+        android:id="@+id/action_home"    
         android:title="@string/menu_home" />
-    <item
-        android:id="@+id/action_new_tab"
+    <item    
+        android:id="@+id/action_reload"    
+        android:title="@string/menu_reload" />
+    <item    
+        android:id="@+id/action_new_tab"    
         android:title="@string/menu_new_tab" />
     <item
         android:id="@+id/action_tabs"
