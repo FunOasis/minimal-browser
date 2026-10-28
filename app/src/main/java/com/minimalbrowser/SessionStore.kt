@@ -34,7 +34,7 @@ object SessionStore {
     private const val KEY_TABS = "tabs"
     private const val KEY_ACTIVE = "active"
     private const val SEP = "\t"
-    private const val MAX_TABS = 6
+    private const val MAX_TABS = 10
 
     data class Snapshot(
         val urls: List<String>,
