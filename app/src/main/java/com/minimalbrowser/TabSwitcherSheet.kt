@@ -7,11 +7,13 @@ import android.graphics.drawable.ColorDrawable
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 
 class TabSwitcherSheet(
@@ -22,16 +24,21 @@ class TabSwitcherSheet(
 ) {
 
     private var dialog: Dialog? = null
+    private var scrollView: ScrollView? = null
 
     fun show() {
         val root = LayoutInflater.from(context)
             .inflate(R.layout.sheet_tabs, null, false)
 
         val rows = root.findViewById<LinearLayout>(R.id.tabRows)
+        val scroll = root.findViewById<ScrollView>(R.id.tabRowsScroll)
         val closeSheet = root.findViewById<ImageButton>(R.id.closeSheet)
         val newTab = root.findViewById<View>(R.id.newTabButton)
 
+        scrollView = scroll
+
         rebuildRows(rows)
+        applyScrollCap(scroll, rows)
 
         val d = Dialog(context).apply {
             requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -66,6 +73,41 @@ class TabSwitcherSheet(
 
     fun dismiss() {
         dialog?.dismiss()
+    }
+
+    /**
+     * Cap the scrollable tab grid so the sheet never grows taller than
+     * the screen with many tabs open. With few tabs the ScrollView
+     * shrinks to its content height and the sheet looks exactly as it
+     * did before.
+     *
+     * 60% of screen height is the cap. On a typical 800dp-tall phone
+     * that is ~480dp, which fits 4 full rows of 110dp cards plus part
+     * of a 5th (with scroll) — plenty for 10 tabs — while leaving
+     * ~320dp for the header, "+ New tab" button, padding, and system
+     * bars.
+     */
+    private fun applyScrollCap(scroll: ScrollView, rows: LinearLayout) {
+        val metrics = context.resources.displayMetrics
+        val maxScrollPx = (metrics.heightPixels * 0.60f).toInt()
+
+        val widthSpec = View.MeasureSpec.makeMeasureSpec(
+            metrics.widthPixels, View.MeasureSpec.AT_MOST
+        )
+        val heightSpec = View.MeasureSpec.makeMeasureSpec(
+            0, View.MeasureSpec.UNSPECIFIED
+        )
+        rows.measure(widthSpec, heightSpec)
+        val contentH = rows.measuredHeight
+
+        val target = if (contentH > maxScrollPx) maxScrollPx
+                     else ViewGroup.LayoutParams.WRAP_CONTENT
+
+        val lp = scroll.layoutParams ?: return
+        if (lp.height != target) {
+            lp.height = target
+            scroll.layoutParams = lp
+        }
     }
 
     private fun rebuildRows(container: LinearLayout) {
@@ -136,9 +178,9 @@ class TabSwitcherSheet(
         }
 
         close.setOnClickListener {
-            // Bug 2 fix: closing the last remaining tab is not a silent
-            // no-op. Dismiss the sheet and hand control back to the
-            // activity, which will raise the exit-confirm dialog.
+            // Closing the last remaining tab is not a silent no-op.
+            // Dismiss the sheet and hand control back to the activity,
+            // which raises the exit-confirm dialog.
             if (tabManager.count() <= 1) {
                 dismiss()
                 onLastTabCloseRequested()
@@ -152,7 +194,19 @@ class TabSwitcherSheet(
             } else {
                 val parent = cell.parent as? LinearLayout
                 val grandparent = parent?.parent as? LinearLayout
-                if (grandparent != null) rebuildRows(grandparent)
+                if (grandparent != null) {
+                    rebuildRows(grandparent)
+                    // Recompute the cap: content may have shrunk enough
+                    // that the grid no longer needs to scroll.
+                    scrollView?.let { applyScrollCap(it, grandparent) }
+                    // Ask the dialog to re-measure so a shrunk sheet
+                    // doesn't leave dead space below the "+ New tab"
+                    // button.
+                    dialog?.window?.setLayout(
+                        WindowManager.LayoutParams.MATCH_PARENT,
+                        WindowManager.LayoutParams.WRAP_CONTENT
+                    )
+                }
             }
         }
     }
