@@ -803,43 +803,46 @@ private fun scoreMatch(entry: HistoryStore.Entry, q: String): Int {
         }
     }
 
-    private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {
-        R.id.action_home -> { loadHome(); true }
-
-        R.id.action_new_tab -> {
-            tabManager.create()
-            true
+    private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {    
+        
+        R.id.action_home -> { loadHome(); true }    
+        
+        R.id.action_reload -> { tabManager.reloadActive(); true }    
+        
+        R.id.action_new_tab -> {        
+            tabManager.create()        
+            true    
         }
-
+        
         R.id.action_tabs -> {
             showTabSwitcher()
             true
         }
-
+        
         R.id.action_add_shortcut -> {
             addCurrentPageShortcut()
             true
         }
-
+        
         R.id.action_find_in_page -> { 
             showFindBar(); 
             true }
-
+        
         R.id.action_js -> {
             toggleActiveJavaScript()
             true
         }
-
+        
         R.id.action_custom_filters -> {
             showCustomFiltersDialog()
             true
         }
-
+        
         R.id.action_toggle_site_blocking -> {
             toggleSiteBlocking()
             true
         }
-
+        
         R.id.action_toggle_desktop -> {
             toggleDesktopMode()
             true
