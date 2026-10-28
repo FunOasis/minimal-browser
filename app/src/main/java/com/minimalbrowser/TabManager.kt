@@ -32,7 +32,7 @@ class TabManager(
     companion object {
         private const val TAG = "TabManager"
 
-        const val MAX_TABS = 6
+        const val MAX_TABS = 10
     }
 
     class Tab(val id: Long) {
