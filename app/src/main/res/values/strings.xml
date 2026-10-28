@@ -2,6 +2,9 @@
 <resources>
     <string name="app_name">Minimal Browser</string>
     <string name="footer_brand">MINIMAL BROWSER</string>
+    <string name="about_brand">MINIMAL BROWSER</string>
+    <string name="about_copyright">© P R S</string>
+    <string name="about_webview_version">WebView %1$s</string>
 
     <string name="hint_address">Search or type URL</string>
 
@@ -21,8 +24,10 @@
     <string name="menu_downloads">Downloads</string>
     <string name="menu_clear">Clear cache</string>
     <string name="menu_exit">Exit</string>
-
+    <string name="menu_about">About</string>
+    
     <string name="address_hint">Search or type URL</string>
+    
     <string name="cd_back">Back</string>
     <string name="cd_forward">Forward</string>
     <string name="cd_menu">Menu</string>
@@ -102,6 +107,7 @@
     <string name="downloads_nothing_to_clear">Nothing to clear</string>
     <string name="downloads_file_missing">File is no longer available</string>
     <string name="downloads_no_app">No app can open this file</string>
+    
     <string name="menu_disable_site_blocking">Disable blocking on this site</string>
     <string name="menu_desktop_site">Desktop site</string>
     <string name="menu_reset_site_overrides">Reset all site settings</string>
