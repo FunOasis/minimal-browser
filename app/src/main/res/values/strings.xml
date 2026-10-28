@@ -11,6 +11,7 @@
     <string name="action_go">Search</string>
 
     <string name="menu_home">Home</string>
+    <string name="menu_reload">Reload</string>
     <string name="menu_new_tab">New tab</string>
     <string name="menu_tabs_placeholder">Tabs</string>
     <string name="menu_tabs">Tabs (%1$d)</string>
