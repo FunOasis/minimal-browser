@@ -50,6 +50,22 @@
             android:scaleType="centerInside"
             android:src="@drawable/ic_plus"
             android:tint="@color/icon_primary" />
+        <TextView
+    android:id="@+id/btnClearAll"
+    android:layout_width="wrap_content"
+    android:layout_height="36dp"
+    android:layout_marginStart="@dimen/topbar_gap"
+    android:background="?attr/selectableItemBackground"
+    android:gravity="center"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:text="@string/vault_clear_all"
+    android:textColor="@color/danger"
+    android:textSize="14sp"
+    android:clickable="true"
+    android:focusable="true"
+    android:visibility="gone"
+    tools:visibility="visible" />
     </LinearLayout>
 
     <LinearLayout
