@@ -24,6 +24,23 @@ import java.security.MessageDigest
  * SHA-1 of the URL. Deleted whenever the corresponding entry is
  * removed, cleared, or aged out by clearOlderThan(). An in-memory
  * LruCache cuts the disk hit on repeated list scrolls to near zero.
+ *
+ * In-memory entry cache
+ * ---------------------
+ * loadAll() is on the address-bar suggestion hot path: it runs on
+ * every keystroke. Parsing the newline blob each time scaled with
+ * history size and produced 7 full parses for a 7-character query.
+ * The parsed entry list is now cached, invalidated only by the four
+ * mutating methods below (record / remove / clear / clearOlderThan).
+ * All four hold the instance monitor, so the cache cannot be seen
+ * half-updated.
+ *
+ * Ordering-safe record
+ * --------------------
+ * record() now takes an explicit timestamp. MainActivity captures
+ * the timestamp on the UI thread and passes it into a background
+ * coroutine, so two racing records preserve visit order even if the
+ * coroutines complete out of order.
  */
 class HistoryStore private constructor(context: Context) {
 
@@ -37,6 +54,9 @@ class HistoryStore private constructor(context: Context) {
     /** Small in-memory bitmap cache so list scrolling does not re-read disk. */
     private val iconCache = object : LruCache<String, Bitmap>(100) {}
 
+    /** Parsed entry cache. Null = not yet loaded. Never written outside this class. */
+    @Volatile private var _cache: List<Entry>? = null
+
     data class Entry(
         val url: String,
         val title: String,
@@ -45,12 +65,16 @@ class HistoryStore private constructor(context: Context) {
     )
 
     @Synchronized
-    fun record(url: String, title: String, favicon: Bitmap? = null) {
+    fun record(
+        url: String,
+        title: String,
+        favicon: Bitmap? = null,
+        now: Long = System.currentTimeMillis()
+    ) {
         if (url.isBlank()) return
         if (url.startsWith(Prefs.HOME_URL)) return
         if (!url.startsWith("http://") && !url.startsWith("https://")) return
 
-        val now = System.currentTimeMillis()
         val current = loadAll().toMutableList()
         val existing = current.firstOrNull { it.url == url }
         current.removeAll { it.url == url }
@@ -76,18 +100,23 @@ class HistoryStore private constructor(context: Context) {
         }
 
         saveAll(current)
+        _cache = current
     }
 
     @Synchronized
     fun loadAll(): List<Entry> {
-        val blob = sp.getString(KEY_HISTORY, "") ?: return emptyList()
-        if (blob.isEmpty()) return emptyList()
-        return blob.lineSequence()
+        _cache?.let { return it }
+        val blob = sp.getString(KEY_HISTORY, "") ?: return emptyList<Entry>().also {
+            _cache = it
+        }
+        if (blob.isEmpty()) return emptyList<Entry>().also { _cache = it }
+        val parsed = blob.lineSequence()
             .mapNotNull { line ->
-                if (line.isEmpty()) return@mapNotNull null
-                parseLine(line)
+                if (line.isEmpty()) null else parseLine(line)
             }
             .toList()
+        _cache = parsed
+        return parsed
     }
 
     @Synchronized
@@ -95,6 +124,7 @@ class HistoryStore private constructor(context: Context) {
         val current = loadAll().toMutableList()
         if (current.removeAll { it.url == url }) {
             saveAll(current)
+            _cache = current
             deleteFavicon(url)
             iconCache.remove(url)
         }
@@ -105,6 +135,7 @@ class HistoryStore private constructor(context: Context) {
         sp.edit().remove(KEY_HISTORY).apply()
         try { iconsDir.listFiles()?.forEach { it.delete() } } catch (_: Throwable) {}
         iconCache.evictAll()
+        _cache = emptyList()
     }
 
     /**
@@ -131,13 +162,15 @@ class HistoryStore private constructor(context: Context) {
         }
         current.removeAll(toRemove)
         saveAll(current)
+        _cache = current
         return toRemove.size
     }
 
     /**
      * Returns the cached favicon for a URL, or null if none has been
      * stored. Safe to call from a background thread; the in-memory
-     * cache is LruCache-synchronised internally.
+     * cache is LruCache-synchronised internally, and this method
+     * touches no shared history state.
      */
     fun loadFavicon(url: String): Bitmap? {
         iconCache.get(url)?.let { return it }
