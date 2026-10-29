@@ -215,9 +215,13 @@ class TabManager(
             wv.loadUrl(cleaned)
             tab.hasLoadedOnce = true
         }
-
+            
         syncVisibility()
-        onTabsChanged()
+    // Re-run vault detection for the now-active tab. Without this,
+    // switching to an already-loaded login page never re-triggers
+    // detection, because onPageFinished only fires once per load.    
+        wv?.let { vaultController.recheck(it) }    
+        onTabsChanged()    
         syncActiveUi()
     }
 
