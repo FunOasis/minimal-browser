@@ -429,6 +429,10 @@ fun freezeIdleTabs(isBackgrounded: Boolean): Int {
 
         wv.addJavascriptInterface(tab.scrollBridge, PageScrollProbe.JS_INTERFACE_NAME)
         BlobDownloadHelper.install(wv)
+        wv.addJavascriptInterface(
+            VaultBridge(vaultController, wv),
+            VaultPillController.JS_BRIDGE_NAME
+        )
 
         WebViewConfigurator.apply(wv, tab.javaScriptEnabled)
 
