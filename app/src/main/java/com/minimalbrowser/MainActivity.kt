@@ -866,6 +866,85 @@ private fun showAboutDialog() {
     dialog.show()
 }
 
+private fun showSettingsDialog() {
+    val host = currentHost()
+    val isDesktop = host?.let { prefs.isDesktopHost(it) } ?: false
+    val isBlocked = host?.let { prefs.isHostDisabled(it) } ?: false
+    val jsEnabled = tabManager.isActiveJsEnabled()
+
+    val labels = ArrayList<String>(12)
+    val actions = ArrayList<() -> Unit>(12)
+
+    labels.add(
+        getString(R.string.menu_toggle_js) +
+            ": " + (if (jsEnabled) "On" else "Off")
+    )
+    actions.add { toggleActiveJavaScript() }
+
+    if (host != null) {
+        labels.add(
+            getString(R.string.menu_desktop_site) +
+                ": " + (if (isDesktop) "On" else "Off")
+        )
+        actions.add { toggleDesktopMode() }
+
+        labels.add(
+            if (isBlocked) getString(R.string.menu_enable_site_blocking)
+            else getString(R.string.menu_disable_site_blocking)
+        )
+        actions.add { toggleSiteBlocking() }
+    }
+
+    labels.add(getString(R.string.menu_custom_filters))
+    actions.add { showCustomFiltersDialog() }
+
+    labels.add(getString(R.string.menu_freeze_settings))
+    actions.add { showFreezeSettingsDialog() }
+
+    labels.add(getString(R.string.menu_add_shortcut))
+    actions.add { addCurrentPageShortcut() }
+
+    labels.add(getString(R.string.menu_reset_site_overrides))
+    actions.add {
+        prefs.disabledHosts = emptySet()
+        prefs.desktopHosts = emptySet()
+        blocker.invalidateCache()
+        Toast.makeText(
+            this,
+            R.string.site_overrides_reset,
+            Toast.LENGTH_SHORT
+        ).show()
+        tabManager.getActiveWebView()?.let { wv ->
+            WebViewConfigurator.applyUserAgent(this, wv, false)
+        }
+    }
+
+    labels.add(getString(R.string.menu_clear))
+    actions.add { clearCacheNow() }
+
+    labels.add(getString(R.string.menu_clear_webview_data))
+    actions.add { confirmClearWebViewData() }
+
+    labels.add(getString(R.string.menu_about))
+    actions.add { showAboutDialog() }
+
+    MaterialAlertDialogBuilder(this)
+        .setTitle(R.string.menu_settings)
+        .setItems(labels.toTypedArray()) { _, which ->
+            actions[which].invoke()
+        }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+}
+
+private fun clearCacheNow() {
+    tabManager.tabs.forEach { tab ->
+        tab.webView?.clearHistory()
+        tab.webView?.clearCache(true)
+    }
+    Toast.makeText(this, "Cache cleared", Toast.LENGTH_SHORT).show()
+}
+
 private fun showTabSwitcher() {
         TabSwitcherSheet(
             context = this,
