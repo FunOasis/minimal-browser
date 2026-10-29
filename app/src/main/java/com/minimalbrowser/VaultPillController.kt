@@ -319,7 +319,23 @@ fun recheck(webView: WebView) {
                     el.dispatchEvent(new Event('change', { bubbles: true }));
                 }
                 if (userFields.length > 0) setVal(userFields[0], u);
-                for (var i = 0; i < passFields.length; i++) setVal(passFields[i], p);
+if (passFields.length === 1) {
+    setVal(passFields[0], p);
+} else {
+    for (var i = 0; i < passFields.length; i++) {
+        var pf = passFields[i];
+        var ac = (pf.getAttribute('autocomplete') || '').toLowerCase();
+        var nm = (
+            (pf.getAttribute('name') || '') + ' ' +
+            (pf.getAttribute('id') || '')
+        ).toLowerCase();
+        var isNew = ac === 'new-password' || /new|confirm|repeat/.test(nm);
+        if (!isNew) {
+            setVal(pf, p);
+            break;
+        }
+    }
+}
             })();
         """.trimIndent()
         try {
