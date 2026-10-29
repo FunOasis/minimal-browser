@@ -9,6 +9,21 @@ import android.content.SharedPreferences
  * Deliberately contains no default subscription URLs. Ad blocking is
  * entirely opt-in: the user pastes list URLs into the ad-blocking
  * dialog, or the warehouse stays empty. Nothing is shipped in the APK.
+ *
+ * Cached line-parsed sets
+ * -----------------------
+ * disabledHosts / desktopHosts / removeParams / vaultNeverSaveHosts
+ * are all read from hot paths:
+ *
+ *   disabledHosts       - AdBlocker.isBlocked, every HTTP request
+ *   desktopHosts        - shouldOverrideUrlLoading, every nav
+ *   removeParams        - UrlCleaner.clean, every nav
+ *   vaultNeverSaveHosts - onCredentialsCaptured, every login submit
+ *
+ * Each getter used to re-parse a newline blob from SharedPreferences
+ * on every call. That is dozens of String allocations per page. Each
+ * set is now parsed once and cached, and the cache is refreshed
+ * in-place when the corresponding setter runs.
  */
 class Prefs private constructor(context: Context) {
 
@@ -39,53 +54,79 @@ class Prefs private constructor(context: Context) {
         get() = sp.getInt(KEY_FREEZE_BG_MIN, 2)
         set(v) = sp.edit().putInt(KEY_FREEZE_BG_MIN, v.coerceAtLeast(0)).apply()
 
+    // ------------------------------------------------------------------
+    // Cached set properties
+    // ------------------------------------------------------------------
+
+    @Volatile private var _disabledHostsCache: Set<String>? = null
+
     var disabledHosts: Set<String>
         get() {
-            val blob = sp.getString(KEY_DISABLED_HOSTS, "") ?: return emptySet()
-            if (blob.isBlank()) return emptySet()
-            return blob.lineSequence()
+            _disabledHostsCache?.let { return it }
+            val blob = sp.getString(KEY_DISABLED_HOSTS, "") ?: ""
+            val set = if (blob.isBlank()) emptySet() else blob.lineSequence()
                 .map { it.trim().lowercase() }
                 .filter { it.isNotEmpty() }
                 .toSet()
+            _disabledHostsCache = set
+            return set
         }
         set(v) {
             val cleaned = v.map { it.trim().lowercase() }
                 .filter { it.isNotEmpty() }
                 .toSortedSet()
             sp.edit().putString(KEY_DISABLED_HOSTS, cleaned.joinToString("\n")).apply()
+            _disabledHostsCache = cleaned
         }
+
+    @Volatile private var _desktopHostsCache: Set<String>? = null
 
     var desktopHosts: Set<String>
         get() {
-            val blob = sp.getString(KEY_DESKTOP_HOSTS, "") ?: return emptySet()
-            if (blob.isBlank()) return emptySet()
-            return blob.lineSequence()
+            _desktopHostsCache?.let { return it }
+            val blob = sp.getString(KEY_DESKTOP_HOSTS, "") ?: ""
+            val set = if (blob.isBlank()) emptySet() else blob.lineSequence()
                 .map { it.trim().lowercase() }
                 .filter { it.isNotEmpty() }
                 .toSet()
+            _desktopHostsCache = set
+            return set
         }
         set(v) {
             val cleaned = v.map { it.trim().lowercase() }
                 .filter { it.isNotEmpty() }
                 .toSortedSet()
             sp.edit().putString(KEY_DESKTOP_HOSTS, cleaned.joinToString("\n")).apply()
+            _desktopHostsCache = cleaned
         }
+
+    @Volatile private var _removeParamsCache: Set<String>? = null
 
     var removeParams: Set<String>
         get() {
-            if (!sp.contains(KEY_REMOVE_PARAMS)) return UrlCleaner.DEFAULT_REMOVE_PARAMS
-            val blob = sp.getString(KEY_REMOVE_PARAMS, "") ?: return UrlCleaner.DEFAULT_REMOVE_PARAMS
-            if (blob.isBlank()) return emptySet()
-            return blob.lineSequence()
+            _removeParamsCache?.let { return it }
+            // Key absent -> use shipped defaults. We still cache the
+            // result so the "not yet customised" state costs nothing
+            // after the first read.
+            if (!sp.contains(KEY_REMOVE_PARAMS)) {
+                val def = UrlCleaner.DEFAULT_REMOVE_PARAMS
+                _removeParamsCache = def
+                return def
+            }
+            val blob = sp.getString(KEY_REMOVE_PARAMS, "") ?: ""
+            val set = if (blob.isBlank()) emptySet() else blob.lineSequence()
                 .map { it.trim().lowercase() }
                 .filter { it.isNotEmpty() }
                 .toSet()
+            _removeParamsCache = set
+            return set
         }
         set(v) {
             val cleaned = v.map { it.trim().lowercase() }
                 .filter { it.isNotEmpty() }
                 .toSortedSet()
             sp.edit().putString(KEY_REMOVE_PARAMS, cleaned.joinToString("\n")).apply()
+            _removeParamsCache = cleaned
         }
 
     var legacyDefaultsCleaned: Boolean
@@ -96,20 +137,25 @@ class Prefs private constructor(context: Context) {
     // Password vault: sites the user said "never save" for
     // ------------------------------------------------------------------
 
+    @Volatile private var _vaultNeverCache: Set<String>? = null
+
     var vaultNeverSaveHosts: Set<String>
         get() {
-            val blob = sp.getString(KEY_VAULT_NEVER, "") ?: return emptySet()
-            if (blob.isBlank()) return emptySet()
-            return blob.lineSequence()
+            _vaultNeverCache?.let { return it }
+            val blob = sp.getString(KEY_VAULT_NEVER, "") ?: ""
+            val set = if (blob.isBlank()) emptySet() else blob.lineSequence()
                 .map { it.trim().lowercase() }
                 .filter { it.isNotEmpty() }
                 .toSet()
+            _vaultNeverCache = set
+            return set
         }
         set(v) {
             val cleaned = v.map { it.trim().lowercase() }
                 .filter { it.isNotEmpty() }
                 .toSortedSet()
             sp.edit().putString(KEY_VAULT_NEVER, cleaned.joinToString("\n")).apply()
+            _vaultNeverCache = cleaned
         }
 
     fun isVaultNeverSaveHost(host: String): Boolean {
