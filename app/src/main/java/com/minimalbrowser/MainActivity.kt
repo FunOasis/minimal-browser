@@ -1556,7 +1556,6 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
         val tab = tabManager.findByWebView(view)
         history.record(url, title, tab?.favicon)
         updateBlockCountBadge()
-        VaultPillController.injectDetection(view, url)
         
         if (binding.findBar.visibility == View.VISIBLE) {    
             val q = binding.findInput.text.toString()    
