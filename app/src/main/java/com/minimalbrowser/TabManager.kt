@@ -26,7 +26,7 @@ class TabManager(
     private val onFullscreenShow: (View, WebChromeClient.CustomViewCallback) -> Unit,
     private val onFullscreenHide: () -> Unit,
     private val onLongPressLink: (String) -> Unit,
-    private val onFindResult: (Int, Int) -> Unit
+    private val onFindResult: (Int, Int) -> Unit,
     private val vaultController: VaultPillController
 ) {
 
