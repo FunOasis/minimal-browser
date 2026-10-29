@@ -890,9 +890,14 @@ private fun scoreMatch(entry: HistoryStore.Entry, q: String): Int {
         }
                 
         R.id.action_bookmark_this_page -> { toggleCurrentBookmark(); true }
-
+                
         R.id.action_bookmarks -> {
             startActivity(Intent(this, BookmarksActivity::class.java))
+            true
+        }
+
+        R.id.action_saved_passwords -> {
+            startActivity(Intent(this, VaultActivity::class.java))
             true
         }
 
