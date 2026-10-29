@@ -69,6 +69,35 @@ class BlockingWebViewClient(
             "text/plain", "utf-8", 204, "No Content", emptyMap(),
             ByteArrayInputStream(EMPTY_BODY)
         )
+
+        // -----------------------------------------------------------------
+        // Home page asset cache
+        //
+        // BlockingWebViewClient is instantiated once per tab. The asset
+        // read (open + bufferedReader + readText) was previously paid
+        // once per new tab, every time. One read per process is enough.
+        // -----------------------------------------------------------------
+        @Volatile private var cachedHomeHtml: String? = null
+
+        private fun loadHomeHtml(ctx: Context): String {
+            cachedHomeHtml?.let { return it }
+            return synchronized(this) {
+                cachedHomeHtml ?: run {
+                    val text = try {
+                        ctx.assets.open("home.html")
+                            .bufferedReader(Charsets.UTF_8)
+                            .use { it.readText() }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "home.html unreadable: " + e.message)
+                        "<html><body style='background:#000;color:#fff;" +
+                            "font-family:sans-serif;padding:32px'>" +
+                            "<h2>Home page unavailable</h2></body></html>"
+                    }
+                    cachedHomeHtml = text
+                    text
+                }
+            }
+        }
     }
 
     private val blockedCounter = AtomicInteger(0)
@@ -173,26 +202,12 @@ class BlockingWebViewClient(
     }
 
     private fun serveHomePage(): WebResourceResponse {
-        return try {
-            val html = appContext.assets
-                .open("home.html")
-                .bufferedReader(Charsets.UTF_8)
-                .use { it.readText() }
-            WebResourceResponse(
-                "text/html", "utf-8", 200, "OK",
-                mapOf("Cache-Control" to "no-cache"),
-                ByteArrayInputStream(html.toByteArray(Charsets.UTF_8))
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "home.html unreadable: " + e.message)
-            val fallback = "<html><body style='background:#000;color:#fff;" +
-                "font-family:sans-serif;padding:32px'>" +
-                "<h2>Home page unavailable</h2></body></html>"
-            WebResourceResponse(
-                "text/html", "utf-8", 500, "Internal Error", emptyMap(),
-                ByteArrayInputStream(fallback.toByteArray(Charsets.UTF_8))
-            )
-        }
+        val html = loadHomeHtml(appContext)
+        return WebResourceResponse(
+            "text/html", "utf-8", 200, "OK",
+            mapOf("Cache-Control" to "no-cache"),
+            ByteArrayInputStream(html.toByteArray(Charsets.UTF_8))
+        )
     }
 
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
