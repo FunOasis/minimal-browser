@@ -414,4 +414,102 @@ class VaultPillController(
                     for (var i = 0; i < hints.length; i++) {
                         var h = hints[i];
                         if (h === pw) continue;
-                        if (h
+                        if (h.type === 'hidden' || h.disabled) continue;
+                        if (!h.offsetParent && h.offsetWidth === 0) continue;
+                        return h;
+                    }
+                    var all;
+                    try {
+                        all = scope.querySelectorAll('input[type="text"], input[type="email"]');
+                    } catch (e) { return null; }
+                    var candidate = null;
+                    for (var j = 0; j < all.length; j++) {
+                        var c = all[j];
+                        if (c === pw) continue;
+                        if (!c.offsetParent && c.offsetWidth === 0) continue;
+                        if (c.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                            candidate = c;
+                        }
+                    }
+                    return candidate;
+                }
+
+                function readFromForm(form) {
+                    var pw = form.querySelector('input[type="password"]');
+                    if (!pw || !pw.value) return;
+                    var userField = findUsernameField(form);
+                    sendCapture(userField ? userField.value : '', pw.value);
+                }
+
+                document.addEventListener('submit', function(e) {
+                    try {
+                        var form = e.target;
+                        if (!form || form.tagName !== 'FORM') return;
+                        readFromForm(form);
+                    } catch (err) {}
+                }, true);
+
+                document.addEventListener('keydown', function(e) {
+                    try {
+                        if (e.key !== 'Enter') return;
+                        var t = e.target;
+                        if (!t || t.tagName !== 'INPUT' || t.type !== 'password') return;
+                        if (!t.value) return;
+                        var form = t.form || t.closest('form');
+                        if (form) {
+                            var userField = findUsernameField(form);
+                            sendCapture(userField ? userField.value : '', t.value);
+                        } else {
+                            sendCapture('', t.value);
+                        }
+                    } catch (err) {}
+                }, true);
+
+                function isSubmitLikeButton(btn) {
+                    if (!btn) return false;
+                    if (btn.type === 'submit') return true;
+                    var text = ((btn.textContent || '') + ' ' + (btn.value || '')).trim().toLowerCase();
+                    if (text.length > 40) return false;
+                    return /(sign|log)\s*in|submit|continue|logon|enter|next|verify|authenticate|proceed|connect/i.test(text);
+                }
+
+                document.addEventListener('click', function(e) {
+                    try {
+                        var t = e.target;
+                        if (!t || !t.closest) return;
+                        var btn = t.closest('button, input[type="submit"], [role="button"]');
+                        if (!btn) return;
+                        if (!isSubmitLikeButton(btn)) return;
+
+                        // Prefer the password field inside the same form.
+                        var form = btn.form || btn.closest('form');
+                        var pw = null;
+                        if (form) pw = form.querySelector('input[type="password"]');
+                        if (!pw || !pw.value) {
+                            // Fallback: any password field on the page
+                            // with a value.
+                            var pws = document.querySelectorAll('input[type="password"]');
+                            for (var i = 0; i < pws.length; i++) {
+                                if (pws[i].value) { pw = pws[i]; break; }
+                            }
+                        }
+                        if (!pw || !pw.value) return;
+
+                        var userField = findUsernameField(form || document);
+                        sendCapture(userField ? userField.value : '', pw.value);
+                    } catch (err) {}
+                }, true);
+            })();
+        """.trimIndent()
+
+        fun injectDetection(webView: WebView, url: String?) {
+            if (url.isNullOrBlank()) return
+            if (url.startsWith(Prefs.HOME_URL)) return
+            if (url.startsWith("data:") || url.startsWith("about:")) return
+            try {
+                webView.evaluateJavascript(DETECTION_JS, null)
+                webView.evaluateJavascript(CAPTURE_JS, null)
+            } catch (_: Throwable) {}
+        }
+    }
+}
