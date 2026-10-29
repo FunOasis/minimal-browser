@@ -71,11 +71,6 @@ class BlockingWebViewClient(
         )
     }
 
-    /**
-     * Count of subresource requests blocked on the current top-level
-     * navigation. Incremented concurrently from multiple WebView
-     * internal threads; AtomicInteger keeps it correct without locks.
-     */
     private val blockedCounter = AtomicInteger(0)
 
     val blockedCount: Int
@@ -218,6 +213,11 @@ class BlockingWebViewClient(
             CosmeticFilter.apply(view, url)
         }
         PageScrollProbe.install(view, url)
+        // Inject vault detection for EVERY tab that finishes loading,
+        // not just the active one. A background tab that finishes
+        // loading must already have the detection script installed
+        // so the pill appears the moment the user switches to it.
+        VaultPillController.injectDetection(view, url)
         ui.onPageLoadFinished(view)
         if (url != null) ui.onUrlChanged(view, url)
         ui.onNavStateChanged(view, view.canGoBack(), view.canGoForward())
