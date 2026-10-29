@@ -16,4 +16,9 @@ class VaultBridge(
     fun onPasswordFieldFocused() {
         controller.onPasswordFieldDetected(webView)
     }
+
+    @JavascriptInterface
+    fun onCredentialsCaptured(username: String, password: String) {
+        controller.onCredentialsCaptured(webView, username, password)
+    }
 }
