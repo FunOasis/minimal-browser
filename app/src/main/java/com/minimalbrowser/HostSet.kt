@@ -28,6 +28,15 @@ package com.minimalbrowser
  * The suffix walk is the same trick the trie used, just expressed in
  * flat string prefixes rather than node traversal.
  *
+ * Zero-allocation hot path
+ * ------------------------
+ * matches() is called from shouldInterceptRequest for every
+ * non-mainframe request, i.e. dozens of times per page. The previous
+ * implementation built the reversed host then took a substring per
+ * candidate suffix. This version hashes the reversed string in place,
+ * one character at a time, checking a candidate at each dot. Zero
+ * intermediate String allocations.
+ *
  * Collision risk: FNV-1a is 64-bit. Expected collisions among 150k
  * items are on the order of 1 in 10^9. Two unrelated hosts colliding
  * would cause a false block -- a real but astronomically unlikely event.
@@ -49,16 +58,25 @@ class HostSet private constructor(private val hashes: LongArray) {
         if (hashes.isEmpty() || host.isEmpty()) return false
         val reversed = reverseHost(host)
         val n = reversed.length
-        var end = 0
-        while (end < n) {
-            val dot = reversed.indexOf('.', end)
-            val cut = if (dot < 0) n else dot
-            val candidate = reversed.substring(0, cut)
-            if (containsHash(fnv1a64(candidate))) return true
-            if (dot < 0) break
-            end = dot + 1
+        var h = FNV_OFFSET
+        var i = 0
+        while (i < n) {
+            val c = reversed[i]
+            if (c == '.') {
+                // End of a label: the prefix hashed so far is one
+                // candidate suffix. Check it, then fold the dot into
+                // the running hash and continue.
+                if (containsHash(h)) return true
+                h = h xor '.'.code.toLong()
+                h *= FNV_PRIME
+            } else {
+                h = h xor c.code.toLong()
+                h *= FNV_PRIME
+            }
+            i++
         }
-        return false
+        // Final candidate: the whole reversed string.
+        return containsHash(h)
     }
 
     private fun containsHash(h: Long): Boolean = hashes.binarySearch(h) >= 0
