@@ -136,6 +136,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             onFullscreenHide = { exitFullscreen() },
             onLongPressLink = { url -> showLinkOptions(url) },
             onFindResult = { active, total -> updateFindCount(active, total) }
+            vaultController = vaultController
         )
 
         binding.swipeRefresh.setOnRefreshListener { tabManager.reloadActive() }
