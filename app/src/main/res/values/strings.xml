@@ -170,6 +170,7 @@
     <string name="menu_remove_bookmark">Remove bookmark</string>
     <string name="menu_bookmarks">Bookmarks</string>
     <string name="menu_saved_passwords">Saved passwords</string>
+    <string name="menu_settings">Settings</string>
     <string name="vault_title">Saved passwords</string>
     <string name="vault_search_hint">Search saved passwords</string>
     <string name="vault_empty_title">No saved passwords</string>
