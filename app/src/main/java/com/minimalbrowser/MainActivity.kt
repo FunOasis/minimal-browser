@@ -1538,6 +1538,7 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
         binding.progressBar.progress = 0
         binding.progressBar.visibility = View.VISIBLE
         updateBlockCountBadge()
+        vaultController.hidePill()
         
         if (binding.findBar.visibility == View.VISIBLE) {    
             binding.findCount.visibility = View.GONE
@@ -1552,6 +1553,7 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
         val tab = tabManager.findByWebView(view)
         history.record(url, title, tab?.favicon)
         updateBlockCountBadge()
+        VaultPillController.injectDetection(view, url)
         
         if (binding.findBar.visibility == View.VISIBLE) {    
             val q = binding.findInput.text.toString()    
