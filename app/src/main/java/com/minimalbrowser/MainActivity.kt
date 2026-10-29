@@ -103,12 +103,14 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         history = HistoryStore.get(this)                
         bookmarks = BookmarkStore.get(this)
         vaultStore = SecureCredentialStore.get(this)
-        vaultController = VaultPillController(
-            this,
-            vaultStore,
-            { tabManager.getActiveWebView() }
-        )
-        vaultController.setHost(binding.webViewContainer)
+vaultController = VaultPillController(
+    activity = this,
+    store = vaultStore,
+    currentTabWebView = { tabManager.getActiveWebView() },
+    popupWebView = { tabManager.activePopupTrap },
+    popupOpenerUrl = { tabManager.popupOpenerUrl }
+)
+vaultController.setHost(binding.webViewContainer)
 
         tabManager = TabManager(
             activity = this,
