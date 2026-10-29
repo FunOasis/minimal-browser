@@ -32,7 +32,6 @@ class TabManager(
 
     companion object {
         private const val TAG = "TabManager"
-
         const val MAX_TABS = 10
     }
 
@@ -60,6 +59,19 @@ class TabManager(
 
     private var fullscreenActive: Boolean = false
 
+    /**
+     * Popup trap state: when a page opens window.open(), we create a
+     * short-lived WebView to catch either a navigation (which we redirect
+     * to a real tab) or an inline document.write form (which we leave in
+     * place). While the trap is alive and non-null, the VaultPillController
+     * treats it as a first-class WebView for capture and fill.
+     */
+    @Volatile var activePopupTrap: WebView? = null
+        private set
+
+    @Volatile var popupOpenerUrl: String? = null
+        private set
+
     fun count(): Int = _tabs.size
     fun getActiveIndex(): Int = activeIndex
     fun getActive(): Tab? = _tabs.getOrNull(activeIndex)
@@ -69,16 +81,6 @@ class TabManager(
 
     fun getActiveBlockedCount(): Int = getActive()?.client?.blockedCount ?: 0
 
-    // ------------------------------------------------------------------
-    // Navigation helpers
-    // ------------------------------------------------------------------
-
-    /**
-     * Load a URL into the active tab, applying per-host desktop mode
-     * and stripping tracking parameters. The single entry point for
-     * every programmatic navigation from the app UI (address bar,
-     * suggestions, shortcuts, home button).
-     */
     fun loadActive(url: String) {
         val wv = getActiveWebView() ?: return
         applyUaForUrl(wv, url)
@@ -86,10 +88,6 @@ class TabManager(
         wv.loadUrl(cleaned)
     }
 
-    /**
-     * Set the WebView's UA based on the target URL's host. No-op for
-     * non-http(s) URLs (internal pages, about:, data:).
-     */
     private fun applyUaForUrl(wv: WebView, url: String) {
         val lower = url.lowercase()
         if (!lower.startsWith("http://") && !lower.startsWith("https://")) return
@@ -98,10 +96,6 @@ class TabManager(
         val desktop = prefs.isDesktopHost(host)
         WebViewConfigurator.applyUserAgent(activity, wv, desktop)
     }
-
-    // ------------------------------------------------------------------
-    // Per-tab JavaScript
-    // ------------------------------------------------------------------
 
     fun isActiveJsEnabled(): Boolean =
         getActive()?.javaScriptEnabled ?: prefs.javaScriptEnabled
@@ -117,8 +111,6 @@ class TabManager(
         Log.i(TAG, "JS toggled for tab " + tab.id + " -> " + tab.javaScriptEnabled)
         return tab.javaScriptEnabled
     }
-
-    // ------------------------------------------------------------------
 
     fun create(url: String = Prefs.HOME_URL, makeActive: Boolean = true): Tab {
         evictForSpace()
@@ -210,6 +202,8 @@ class TabManager(
         val tab = _tabs[index]
         tab.lastUsedAt = System.currentTimeMillis()
 
+        vaultController.clearTarget()
+
         if (tab.frozen) {
             unfreezeTab(index)
         }
@@ -231,40 +225,25 @@ class TabManager(
         getActiveWebView()?.reload()
     }
 
-    /**
- * Release the WebView of every tab that has been idle past the
- * user-configured threshold. Called periodically from MainActivity's
- * scheduler.
- *
- * Two independent thresholds, both editable via the menu:
- *   prefs.freezeIdleForegroundMinutes -- non-active tabs in the
- *     foreground. The active tab is never frozen in foreground.
- *   prefs.freezeIdleBackgroundMinutes -- every tab, including the
- *     active one, once the app has been backgrounded that long.
- *
- * A value of 0 for either threshold disables that path entirely.
- *
- * Returns the number of tabs frozen this round, for logging.
- */
-fun freezeIdleTabs(isBackgrounded: Boolean): Int {
-    val minutes = if (isBackgrounded) prefs.freezeIdleBackgroundMinutes
-                  else prefs.freezeIdleForegroundMinutes
-    if (minutes <= 0) return 0
-    val threshold = minutes * 60_000L
+    fun freezeIdleTabs(isBackgrounded: Boolean): Int {
+        val minutes = if (isBackgrounded) prefs.freezeIdleBackgroundMinutes
+                      else prefs.freezeIdleForegroundMinutes
+        if (minutes <= 0) return 0
+        val threshold = minutes * 60_000L
 
-    val now = System.currentTimeMillis()
-    var count = 0
-    for ((i, tab) in _tabs.withIndex()) {
-        if (tab.frozen) continue
-        if (tab.webView == null) continue
-        if (i == activeIndex && !isBackgrounded) continue
-        val idle = now - tab.lastUsedAt
-        if (idle < threshold) continue
-        freezeTab(i)
-        count++
+        val now = System.currentTimeMillis()
+        var count = 0
+        for ((i, tab) in _tabs.withIndex()) {
+            if (tab.frozen) continue
+            if (tab.webView == null) continue
+            if (i == activeIndex && !isBackgrounded) continue
+            val idle = now - tab.lastUsedAt
+            if (idle < threshold) continue
+            freezeTab(i)
+            count++
+        }
+        return count
     }
-    return count
-}
 
     fun unfreezeActiveIfFrozen() {
         val idx = activeIndex
@@ -300,6 +279,9 @@ fun freezeIdleTabs(isBackgrounded: Boolean): Int {
             fullscreenActive = false
             try { onFullscreenHide() } catch (_: Throwable) {}
         }
+        activePopupTrap?.let { runCatching { it.destroy() } }
+        activePopupTrap = null
+        popupOpenerUrl = null
         for (tab in _tabs) {
             tab.webView?.let { destroyWebView(it) }
             tab.webView = null
@@ -448,11 +430,9 @@ fun freezeIdleTabs(isBackgrounded: Boolean): Int {
         tab.client = client
         wv.webViewClient = client
         wv.webChromeClient = TabWebChromeClient(tab)
-        // Find-in-page: only forward counts when this tab is active,
-        // so a background tab's search cannot stomp the visible counter.
-        wv.setFindListener { activeMatchOrdinal, numberOfMatches, _ ->    
-            if (tab === getActive()) {        
-                onFindResult(activeMatchOrdinal, numberOfMatches)    
+        wv.setFindListener { activeMatchOrdinal, numberOfMatches, _ ->
+            if (tab === getActive()) {
+                onFindResult(activeMatchOrdinal, numberOfMatches)
             }
         }
 
@@ -468,9 +448,6 @@ fun freezeIdleTabs(isBackgrounded: Boolean): Int {
             )
         }
 
-        // Long-press on a link -> host shows a small action menu.
-        // Returning true here consumes the event; returning false lets
-        // the default long-press behaviour (text selection, etc.) run.
         wv.setOnLongClickListener { v ->
             val w = v as? WebView ?: return@setOnLongClickListener false
             val hit = w.hitTestResult
@@ -512,58 +489,73 @@ fun freezeIdleTabs(isBackgrounded: Boolean): Int {
         }
 
         override fun onCreateWindow(
-    view: WebView?,
-    isDialog: Boolean,
-    isUserGesture: Boolean,
-    resultMsg: Message?
-): Boolean {
-    val msg = resultMsg ?: return false
+            view: WebView?,
+            isDialog: Boolean,
+            isUserGesture: Boolean,
+            resultMsg: Message?
+        ): Boolean {
+            val msg = resultMsg ?: return false
+            if (!isUserGesture) return true
 
-    // Popup blocker: only allow window opens triggered by a
-    // real user gesture (tap on a target="_blank" link, or a
-    // click handler calling window.open). Automatic opens get
-    // dropped silently — no tab, no current-tab navigation.
-    if (!isUserGesture) return true
+            val openerUrl = view?.url
+            val trap = WebView(activity).apply {
+                settings.javaScriptEnabled = true
+                settings.setSupportMultipleWindows(false)
+                addJavascriptInterface(
+                    VaultBridge(vaultController, this),
+                    VaultPillController.JS_BRIDGE_NAME
+                )
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(
+                        v: WebView?,
+                        request: WebResourceRequest?
+                    ): Boolean {
+                        val url = request?.url?.toString().orEmpty()
+                        if (url.isBlank() || url == "about:blank") {
+                            return false
+                        }
+                        // Popup is navigating to a real URL: hand off
+                        // to a normal tab, which has the full bridge,
+                        // injection, and pill support.
+                        if (activePopupTrap === v) {
+                            activePopupTrap = null
+                            popupOpenerUrl = null
+                            vaultController.clearTarget()
+                        }
+                        v?.post { runCatching { v.destroy() } }
+                        create(url = url, makeActive = true)
+                        return true
+                    }
 
-    val trap = WebView(activity).apply {
-        // JS must be on: some ads open about:blank first, then
-        // set location.href on the returned window. Without JS
-        // the trap never sees the real URL.
-        settings.javaScriptEnabled = true
-        settings.setSupportMultipleWindows(false)   // trap must not spawn more traps
-        webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(
-                v: WebView?,
-                request: WebResourceRequest?
-            ): Boolean {
-                val url = request?.url?.toString().orEmpty()
-
-                // Site opened a blank window and will navigate
-                // it via JS. Let the trap load about:blank; the
-                // real URL will fire shouldOverrideUrlLoading a
-                // moment later.
-                if (url.isBlank() || url == "about:blank") {
-                    return false
+                    override fun onPageFinished(v: WebView?, url: String?) {
+                        super.onPageFinished(v, url)
+                        if (v == null) return
+                        // Force injection even for about:blank so
+                        // document.write-styled popups get capture.
+                        try {
+                            v.evaluateJavascript(VaultPillController.DETECTION_JS, null)
+                            v.evaluateJavascript(VaultPillController.CAPTURE_JS, null)
+                        } catch (_: Throwable) {}
+                    }
                 }
-
-                v?.post { runCatching { v.destroy() } }
-                create(url = url, makeActive = true)
-                return true
             }
+
+            activePopupTrap = trap
+            popupOpenerUrl = openerUrl
+
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (activePopupTrap === trap) {
+                    activePopupTrap = null
+                    popupOpenerUrl = null
+                    vaultController.clearTarget()
+                    runCatching { trap.destroy() }
+                }
+            }, 5_000L)
+
+            (msg.obj as? WebView.WebViewTransport)?.webView = trap
+            msg.sendToTarget()
+            return true
         }
-    }
-
-    // Safety net: if the page opens a blank window and never
-    // navigates it, destroy the trap after 5 seconds so we
-    // don't leak a WebView.
-    Handler(Looper.getMainLooper()).postDelayed({
-        runCatching { trap.destroy() }
-    }, 5_000L)
-
-    (msg.obj as? WebView.WebViewTransport)?.webView = trap
-    msg.sendToTarget()
-    return true
-}
 
         override fun onShowCustomView(view: View, callback: CustomViewCallback) {
             if (fullscreenActive) {
