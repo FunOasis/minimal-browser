@@ -27,6 +27,7 @@ class TabManager(
     private val onFullscreenHide: () -> Unit,
     private val onLongPressLink: (String) -> Unit,
     private val onFindResult: (Int, Int) -> Unit
+    private val vaultController: VaultPillController
 ) {
 
     companion object {
