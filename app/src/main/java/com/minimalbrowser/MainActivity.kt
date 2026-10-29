@@ -1535,17 +1535,31 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
     }
     
     override fun onPageLoadFinished(view: WebView) {
+    
         if (view !== tabManager.getActiveWebView()) return
+    
         binding.swipeRefresh.isRefreshing = false
+    
         val url = view.url ?: return
+    
         val title = view.title.orEmpty()
+    
         val tab = tabManager.findByWebView(view)
-        history.record(url, title, tab?.favicon)
+    
+        val icon = tab?.favicon
+    // Capture the timestamp on the UI thread so racing coroutines
+    // preserve visit order. `record` sorts consumers by lastVisited,
+    // so even if two coroutines race, ordering is correct.
+    
+        val now = System.currentTimeMillis()
+        lifecycleScope.launch(Dispatchers.IO) {        
+            history.record(url, title, icon, now)    
+        }    
         updateBlockCountBadge()
-        
-        if (binding.findBar.visibility == View.VISIBLE) {    
-            val q = binding.findInput.text.toString()    
-            if (q.isNotEmpty()) doFind(q)
+    
+        if (binding.findBar.visibility == View.VISIBLE) {        
+            val q = binding.findInput.text.toString()        
+            if (q.isNotEmpty()) doFind(q)    
         }
     }
 
