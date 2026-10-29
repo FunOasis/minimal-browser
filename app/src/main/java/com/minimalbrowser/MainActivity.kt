@@ -102,6 +102,13 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         prefs   = Prefs.get(this)
         history = HistoryStore.get(this)                
         bookmarks = BookmarkStore.get(this)
+        vaultStore = SecureCredentialStore.get(this)
+        vaultController = VaultPillController(
+            this,
+            vaultStore,
+            { tabManager.getActiveWebView() }
+        )
+        vaultController.setHost(binding.webViewContainer)
 
         tabManager = TabManager(
             activity = this,
