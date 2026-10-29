@@ -169,6 +169,11 @@
     <string name="menu_bookmark_this_page">Bookmark this page</string>
     <string name="menu_remove_bookmark">Remove bookmark</string>
     <string name="menu_bookmarks">Bookmarks</string>
+    <string name="menu_saved_passwords">Saved passwords</string>
+    <string name="vault_title">Saved passwords</string>
+    <string name="vault_search_hint">Search saved passwords</string>
+    <string name="vault_empty_title">No saved passwords</string>
+    <string name="cd_remove_credential">Remove credential</string>
     <string name="bookmark_added">Bookmark added</string>
     <string name="bookmark_removed">Bookmark removed</string>
     <string name="bookmarks_title">Bookmarks</string>
