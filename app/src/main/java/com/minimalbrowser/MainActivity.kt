@@ -785,120 +785,55 @@ private fun showOverflowMenu(anchor: View) {
             }
         }
     }
+private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {
+    R.id.action_home -> { loadHome(); true }
 
-    private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {    
-        
-        R.id.action_home -> { loadHome(); true }    
-        
-        R.id.action_reload -> { tabManager.reloadActive(); true }    
-        
-        R.id.action_new_tab -> {        
-            tabManager.create()        
-            true    
-        }
-        
-        R.id.action_tabs -> {
-            showTabSwitcher()
-            true
-        }
-        
-        R.id.action_add_shortcut -> {
-            addCurrentPageShortcut()
-            true
-        }
-        
-        R.id.action_find_in_page -> { 
-            showFindBar(); 
-            true }
-        
-        R.id.action_js -> {
-            toggleActiveJavaScript()
-            true
-        }
-        
-        R.id.action_custom_filters -> {
-            showCustomFiltersDialog()
-            true
-        }
-        
-        R.id.action_toggle_site_blocking -> {
-            toggleSiteBlocking()
-            true
-        }
-        
-        R.id.action_toggle_desktop -> {
-            toggleDesktopMode()
-            true
-        }
+    R.id.action_reload -> { tabManager.reloadActive(); true }
 
-        R.id.action_freeze_settings -> {    
-            showFreezeSettingsDialog()    
-            true
-        }
+    R.id.action_new_tab -> {
+        tabManager.create()
+        true
+    }
 
-        R.id.action_reset_site_overrides -> {    
-            prefs.disabledHosts = emptySet()    
-            prefs.desktopHosts = emptySet()    
-            blocker.invalidateCache()    
-            Toast.makeText(                
-                this,
-        R.string.site_overrides_reset,        
-                Toast.LENGTH_SHORT    
-            ).show()    
-            val wv = tabManager.getActiveWebView()    
-            if (wv != null) {
-        // Snap back to mobile UA immediately.        
-                WebViewConfigurator.applyUserAgent(this, wv, false)    
-            }    
-            true
-        }
+    R.id.action_tabs -> {
+        showTabSwitcher()
+        true
+    }
 
-        R.id.action_downloads -> {
-            startActivity(Intent(this, DownloadsActivity::class.java))
-            true
-        }
+    R.id.action_find_in_page -> { showFindBar(); true }
 
-        R.id.action_history -> {
-            startActivity(Intent(this, HistoryActivity::class.java))
-            true
-        }
-                
-        R.id.action_bookmark_this_page -> { toggleCurrentBookmark(); true }
-                
-        R.id.action_bookmarks -> {
-            startActivity(Intent(this, BookmarksActivity::class.java))
-            true
-        }
+    R.id.action_bookmark_this_page -> { toggleCurrentBookmark(); true }
 
-        R.id.action_saved_passwords -> {
-            startActivity(Intent(this, VaultActivity::class.java))
-            true
-        }
+    R.id.action_history -> {
+        startActivity(Intent(this, HistoryActivity::class.java))
+        true
+    }
 
-        R.id.action_clear -> {
-            tabManager.tabs.forEach { tab ->
-                tab.webView?.clearHistory()
-                tab.webView?.clearCache(true)
-            }
-            Toast.makeText(this, "Cache cleared", Toast.LENGTH_SHORT).show()
-            true
-        }
+    R.id.action_bookmarks -> {
+        startActivity(Intent(this, BookmarksActivity::class.java))
+        true
+    }
 
-        R.id.action_about -> { showAboutDialog(); true }
+    R.id.action_saved_passwords -> {
+        startActivity(Intent(this, VaultActivity::class.java))
+        true
+    }
 
-        R.id.action_clear_webview_data -> {    
-            confirmClearWebViewData()    
-            true
-        }
+    R.id.action_downloads -> {
+        startActivity(Intent(this, DownloadsActivity::class.java))
+        true
+    }
 
-        R.id.action_exit -> {
-            exiting = true
-            SessionStore.clear(this)
-            finishAndRemoveTask()
-            true
-        }
+    R.id.action_settings -> { showSettingsDialog(); true }
 
-            else -> false
+    R.id.action_exit -> {
+        exiting = true
+        SessionStore.clear(this)
+        finishAndRemoveTask()
+        true
+    }
+
+    else -> false
 }
 
 private fun showAboutDialog() {
