@@ -29,6 +29,27 @@
 -dontwarn javax.annotation.**
 -dontwarn com.google.errorprone.annotations.**
 
+# ---------------------------------------------------------------------------
+# Tink's remote keyset downloader (com.google.crypto.tink.util.KeysDownloader)
+#
+# This class downloads keysets from a Google server as part of Android
+# Keystore's *remote provisioning* flow. We do not use it: the vault
+# relies only on Tink's local crypto primitives via
+# EncryptedSharedPreferences. But R8 still scans the class and fails
+# because KeysDownloader references three third-party libraries that
+# are optional Tink dependencies we do not ship:
+#
+#   com.google.api.client.http.*   — Google HTTP Client (transport)
+#   org.joda.time.*                — Joda-Time (timestamp type)
+#   com.fasterxml.jackson.*        — Jackson (JSON parsing)
+#
+# Silencing R8's missing-class check for these packages is safe: none
+# of them is reachable from any code path the vault actually invokes.
+# ---------------------------------------------------------------------------
+-dontwarn com.google.api.client.**
+-dontwarn org.joda.time.**
+-dontwarn com.fasterxml.jackson.**
+
 -keep class com.google.crypto.tink.** { *; }
 -keep class com.google.protobuf.** { *; }
 
