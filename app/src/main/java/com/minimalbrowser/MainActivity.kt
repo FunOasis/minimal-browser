@@ -739,64 +739,35 @@ private fun scoreMatch(entry: HistoryStore.Entry, q: String): Int {
     // -------------------------------------------------------------------------
     // Menu / tabs / dialogs
     // -------------------------------------------------------------------------
+private fun showOverflowMenu(anchor: View) {
+    val themedContext = ContextThemeWrapper(
+        this,
+        R.style.ThemeOverlay_MinimalBrowser_PopupMenu
+    )
+    val popup = PopupMenu(themedContext, anchor)
+    popup.menuInflater.inflate(R.menu.browser_menu, popup.menu)
 
-    private fun showOverflowMenu(anchor: View) {
-        val themedContext = ContextThemeWrapper(
-            this,
-            R.style.ThemeOverlay_MinimalBrowser_PopupMenu
-        )
-        val popup = PopupMenu(themedContext, anchor)
-        popup.menuInflater.inflate(R.menu.browser_menu, popup.menu)
+    val tabsItem = popup.menu.findItem(R.id.action_tabs)
+    tabsItem?.title = getString(R.string.menu_tabs, tabManager.count())
 
-        val tabsItem = popup.menu.findItem(R.id.action_tabs)
-        tabsItem?.title = getString(R.string.menu_tabs, tabManager.count())
-                
-        val bmItem = popup.menu.findItem(R.id.action_bookmark_this_page)
-        if (bmItem != null) {
-            val currentUrl = tabManager.getActiveWebView()?.url
-            if (currentUrl.isNullOrBlank() || currentUrl.startsWith("minimal://")) {
-                bmItem.isEnabled = false
-                bmItem.title = getString(R.string.menu_bookmark_this_page)
-            } else if (bookmarks.contains(currentUrl)) {
-                bmItem.title = getString(R.string.menu_remove_bookmark)
-            } else {
-                bmItem.title = getString(R.string.menu_bookmark_this_page)
-            }
+    val bmItem = popup.menu.findItem(R.id.action_bookmark_this_page)
+    if (bmItem != null) {
+        val currentUrl = tabManager.getActiveWebView()?.url
+        if (currentUrl.isNullOrBlank() || currentUrl.startsWith("minimal://")) {
+            bmItem.isEnabled = false
+            bmItem.title = getString(R.string.menu_bookmark_this_page)
+        } else if (bookmarks.contains(currentUrl)) {
+            bmItem.title = getString(R.string.menu_remove_bookmark)
+        } else {
+            bmItem.title = getString(R.string.menu_bookmark_this_page)
         }
-
-        val host = currentHost()
-
-        val blockItem = popup.menu.findItem(R.id.action_toggle_site_blocking)
-        if (blockItem != null) {
-            if (host == null) {
-                blockItem.isEnabled = false
-                blockItem.title = getString(R.string.menu_disable_site_blocking)
-            } else if (prefs.isHostDisabled(host)) {
-                blockItem.title = getString(R.string.menu_enable_site_blocking)
-            } else {
-                blockItem.title = getString(R.string.menu_disable_site_blocking)
-            }
-        }
-
-        val desktopItem = popup.menu.findItem(R.id.action_toggle_desktop)
-        if (desktopItem != null) {
-            if (host == null) {
-                desktopItem.isEnabled = false
-                desktopItem.title = getString(R.string.menu_desktop_site)
-            } else if (prefs.isDesktopHost(host)) {
-                desktopItem.title = getString(R.string.menu_mobile_site)
-            } else {
-                desktopItem.title = getString(R.string.menu_desktop_site)
-            }
-        }                        
-        // Destructive actions get the danger red so they stand out from
-        // everyday menu items in the black-glass popup.
-        colorMenuItemDanger(popup.menu, R.id.action_exit)
-        colorMenuItemDanger(popup.menu, R.id.action_clear_webview_data)
-
-        popup.setOnMenuItemClickListener { item -> handleMenu(item) }
-        popup.show()
     }
+
+    colorMenuItemDanger(popup.menu, R.id.action_exit)
+
+    popup.setOnMenuItemClickListener { item -> handleMenu(item) }
+    popup.show()
+}
     
     /**
      * Recolour a menu item's title to the theme danger red. Preserves
