@@ -2,10 +2,13 @@ package com.minimalbrowser
 
 import android.os.Bundle
 import android.text.Editable
+import android.text.InputType
 import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -31,6 +34,7 @@ class VaultActivity : AppCompatActivity() {
         binding.vaultList.layoutManager = LinearLayoutManager(this)
         binding.vaultList.adapter = adapter
         binding.btnBack.setOnClickListener { finish() }
+        binding.btnAdd.setOnClickListener { showAddDialog() }
 
         binding.searchInput.addTextChangedListener(object : TextWatcher {
             override fun afterTextChanged(s: Editable?) { refresh(s?.toString().orEmpty()) }
@@ -56,16 +60,90 @@ class VaultActivity : AppCompatActivity() {
 
     private fun confirmDelete(host: String, user: String) {
         MaterialAlertDialogBuilder(this)
-            .setTitle("Remove credential?")
+            .setTitle(R.string.vault_remove_title)
             .setMessage("$user @ $host")
-            .setPositiveButton("Remove") { _, _ ->
+            .setPositiveButton(R.string.vault_remove_yes) { _, _ ->
                 store.remove(host, user)
                 refresh(binding.searchInput.text?.toString().orEmpty())
-                Toast.makeText(this, "Credential removed", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    this, R.string.vault_remove_done, Toast.LENGTH_SHORT
+                ).show()
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
+
+    private fun showAddDialog() {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+
+        val hostInput = EditText(this).apply {
+            hint = getString(R.string.vault_add_host_hint)
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine()
+        }
+        container.addView(hostInput)
+
+        val userInput = EditText(this).apply {
+            hint = getString(R.string.vault_add_user_hint)
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+            setSingleLine()
+        }
+        container.addView(userInput)
+
+        val passInput = EditText(this).apply {
+            hint = getString(R.string.vault_add_pass_hint)
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine()
+        }
+        container.addView(passInput)
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.vault_add_title)
+            .setView(container)
+            .setPositiveButton(R.string.vault_add_save) { _, _ ->
+                val rawHost = hostInput.text?.toString()?.trim().orEmpty()
+                val u = userInput.text?.toString()?.trim().orEmpty()
+                val p = passInput.text?.toString().orEmpty()
+                if (rawHost.isBlank() || u.isBlank() || p.isBlank()) {
+                    Toast.makeText(
+                        this, R.string.vault_add_missing, Toast.LENGTH_SHORT
+                    ).show()
+                    return@setPositiveButton
+                }
+                val clean = normaliseHost(rawHost)
+                if (clean.isBlank() || !clean.contains('.')) {
+                    Toast.makeText(
+                        this, R.string.vault_add_bad_host, Toast.LENGTH_SHORT
+                    ).show()
+                    return@setPositiveButton
+                }
+                store.save(clean, u, p)
+                refresh(binding.searchInput.text?.toString().orEmpty())
+                Toast.makeText(
+                    this, R.string.vault_save_saved, Toast.LENGTH_SHORT
+                ).show()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun normaliseHost(input: String): String {
+        var h = input.trim().lowercase()
+        if (h.contains("://")) h = h.substringAfter("://")
+        h = h.substringBefore("/").substringBefore("?").substringBefore("#")
+        h = h.substringBefore(":")
+        h = h.removePrefix("www.")
+        return h
+    }
+
+    private fun dp(v: Int): Int =
+        (v * resources.displayMetrics.density).toInt()
 
     private inner class VaultAdapter(
         private val onDelete: (String, String) -> Unit
