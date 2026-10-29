@@ -38,6 +38,18 @@
             android:textColor="@color/text_primary"
             android:textSize="18sp"
             android:textStyle="bold" />
+
+        <ImageButton
+            android:id="@+id/btnAdd"
+            android:layout_width="@dimen/icon_button_size"
+            android:layout_height="@dimen/icon_button_size"
+            android:layout_marginStart="@dimen/topbar_gap"
+            android:background="@drawable/bg_icon_glass_rect"
+            android:contentDescription="@string/cd_add_credential"
+            android:padding="@dimen/icon_button_padding"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_plus"
+            android:tint="@color/icon_primary" />
     </LinearLayout>
 
     <LinearLayout
