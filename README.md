@@ -1,54 +1,92 @@
 # Minimal Browser
 
-A small, fast Android WebView browser with host-based ad blocking, subscription-driven cosmetic filtering, and a focus on privacy and clean UI.
+A small, fast Android WebView browser. No bundled ad-blocklists, no
+telemetry, no third-party SDKs. Every network-facing feature is
+opt-in.
 
 ## Features
 
 **Browsing**
-- Multi-tab UI (up to 10 live tabs, LRU eviction)
-- Auto-freeze inactive tabs to save memory and battery
-- Session restore (survives app kill, reboot, and swipe-from-recents)
-- Desktop mode (per-host User-Agent switching)
-- HTML5 Fullscreen support
-- Find in page (live search with match counter and navigation)
+- Multi-tab (max 10, LRU-evicted), auto-freeze of idle tabs
+- Session restore across app kill, reboot, and swipe-from-recents
+- Desktop mode (per-host UA), find-in-page, JS toggle (per-tab)
+- HTML5 fullscreen, `target="_blank"` popups open in new tabs
 
-**Privacy & Ad Blocking**
-- Host-based ad/tracker blocking from remote subscription lists
-- Cosmetic filtering from EasyList-format subscriptions
-- Custom URL keyword pattern blocking
-- Custom tracking parameter stripping (e.g., `utm_source`, `fbclid`)
-- Intercepts `target="_blank"` popups into new tabs to protect the current tab's history
+**Ad blocking** (opt-in — ships with zero lists)
+- Host-based blocking from user-added subscription URLs, merged into a
+  single sorted `LongArray` of FNV-1a hashes (~1.2 MB at 150k hosts)
+- Cosmetic filtering from EasyList `##` / `#@#` rules, injected as one
+  CSS block per page — no `MutationObserver`, no runtime DOM walks
+- Custom host list, custom URL substring patterns, `@@` exceptions
+- Tracking-param stripping (`utm_*`, `fbclid`, `gclid`, …) on main-frame
+  navigations only
+- Per-site disable / desktop-site override
 
-**Utilities**
-- Downloads via system `DownloadManager` (http/https)
-- In-process downloader for `blob:` and `data:` URLs (e.g., canvas exports, PDF generators)
-- History (searchable, sortable, with favicons)
-- Bookmarks (searchable, sortable, with favicons)
-- Address-bar suggestions from local visit history
-- Add to home screen (launcher shortcut per page)
-- Magnet link and external app handoff (`magnet:`, `mailto:`, `intent:`, etc.)
-- JavaScript toggle (global and per-tab)
+**Downloads**
+- `http(s)`: in-process, cookies + referer + UA forwarded (Chrome-style,
+  not `DownloadManager`)
+- `blob:` / `data:`: streamed in 1 MB chunks over a JS bridge → no OOM
+  on large canvas exports
+- Status-bar progress notifications; merged list view backed by
+  `DownloadRepository` (system `DownloadManager` + local records)
 
-## Architecture
+**Storage**
+- History (searchable, sortable, favicons, `Clear older than 30 d`)
+- Bookmarks (searchable, sortable)
+- Password vault: `EncryptedSharedPreferences` (AES256-SIV keys,
+  AES256-GCM values, master key in Android Keystore). Autofill pill on
+  detected password fields; per-site "never save" list; add / edit /
+  delete / clear-all
+- Add-to-home-screen launcher shortcut per page
 
-**Ad Blocking Warehouses**
-Rule storage lives in two warehouses under the app private directory:
-- `filesDir/blocklists/` — one ZIP per host-list subscription, merged into a single sorted `LongArray` of FNV-1a hashes (`HostSet`). ~1.2 MB for 150k hosts.
-- `filesDir/cosmetics/` — one ZIP per EasyList-format subscription, parsed at boot into generic + per-domain selector sets (`CosmeticRules`) and injected as one CSS block per navigation. No MutationObserver, no runtime DOM walks.
+## Architecture notes
 
-A `WorkManager` job refreshes both warehouses every 12 hours. Lists carry their own freshness windows (24h for hosts, 72h for cosmetics) and conditional-GET validators, so repeat runs are cheap.
+**Two warehouses under `filesDir/`**
+- `blocklists/` — one ZIP per subscription, merged to `HostSet`
+  (sorted FNV-1a 64-bit `LongArray`; membership = binary search of
+  reversed-host prefixes)
+- `cosmetics/` — one ZIP per EasyList-format list, parsed once per boot
+  into generic + per-domain selector sets
 
-**Data & Downloads**
-- History and Bookmarks are stored in `SharedPreferences` with an on-disk `LruCache` for favicons.
-- Blob and data URL downloads are streamed in 1MB chunks via a JS bridge (`BlobDownloadHelper`) directly to `MediaStore`, preventing out-of-memory crashes on large files.
+Both refresh via `WorkManager` every 12 h with per-list freshness
+windows (24 h hosts, 72 h cosmetic), conditional-GET validators, retry
+backoff on failure, and a fingerprinted flat cache for the host set so
+cold start skips ZIP decompression.
+
+**Persistence** — history / bookmarks / prefs in `SharedPreferences`;
+favicons as PNGs in `filesDir/history_icons/` with an in-memory
+`LruCache`; parsed history list cached in memory so address-bar
+suggestions are O(1) after first load. Session snapshot written in
+`onStop`.
+
+**Security** — `allowFileAccess=false`, mixed content never allowed,
+geolocation off, third-party cookies off, Safe Browsing on. SSL errors
+are refused (`handler.cancel()`).
 
 ## Build
 
-Built entirely on GitHub Actions. Push to `main` or run the **Build APK** workflow manually from the Actions tab. The debug artifact is published on the run summary page. Release builds are signed if the `KEYSTORE_BASE64` secret is provided.
+CI-only, via GitHub Actions (`.github/workflows/build.yml`).
 
-## Blocklist format
+- **Push to `main`** → debug APK artifact on the workflow run
+- **Push a tag** `v1.2.3` or `1.2.3` → signed release APK attached to a
+  GitHub Release; `versionName` = tag (leading `v` stripped),
+  `versionCode` = `GITHUB_RUN_NUMBER`
+- **Manual run** from the Actions tab
 
-Host lists are standard hosts-file or Adblock-Plus `||domain^` lines. Cosmetic lists are EasyList-format `##` / `#@#` rules; procedural rules (`:has()`, `:has-text()`, `#?#`) are ignored. Custom URL patterns are simple substring matches.
+Release signing requires four repo secrets:
+`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`.
+Without them, the release build falls back to debug signing.
+
+SDK: `minSdk 26`, `targetSdk 34`, `compileSdk 34`, JDK 17, Gradle 8.4,
+Kotlin 1.9.22, AGP 8.2.2. `arm64-v8a` only.
+
+## Blocklist formats
+
+Host lists — plain hosts-file or Adblock-Plus `||domain^` lines.
+Cosmetic lists — EasyList `##` / `#@#` rules. Procedural rules
+(`:has()`, `:has-text()`, `#?#`, `:-abp-*`) are ignored by design:
+a single injected CSS block cannot express them. Custom URL patterns
+are plain substring matches.
 
 ## License
 
