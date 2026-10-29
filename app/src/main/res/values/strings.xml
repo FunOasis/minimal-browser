@@ -193,6 +193,12 @@
 <string name="vault_remove_yes">Remove</string>
 <string name="vault_remove_done">Credential removed</string>
 <string name="cd_add_credential">Add credential</string>
+    <string name="vault_edit_title">Edit password</string>
+<string name="vault_show_password">Show password</string>
+<string name="vault_clear_all">Clear all</string>
+<string name="vault_clear_confirm_title">Clear saved passwords?</string>
+<string name="vault_clear_confirm_message">All saved passwords will be removed. This cannot be undone.</string>
+<string name="vault_clear_confirm_yes">Clear</string>
     <string name="bookmark_added">Bookmark added</string>
     <string name="bookmark_removed">Bookmark removed</string>
     <string name="bookmarks_title">Bookmarks</string>
