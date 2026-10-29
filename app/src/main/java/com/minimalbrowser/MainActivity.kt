@@ -360,16 +360,17 @@ if (restoreUrls != null) {
         updateBlockCountBadge()
     }
 
-    override fun onPause() {
+    override fun onPause() {    
         isBackgrounded = true
-
-        val frozen = tabManager.freezeIdleTabs(isBackgrounded = true)
+    
+        val frozen = tabManager.freezeIdleTabs(isBackgrounded = true)    
         if (frozen > 0) updateTabBadge()
-
+    
         freezeHandler.removeCallbacks(freezeTick)
-
-        tabManager.pauseAll()
-        tabManager.getActiveWebView()?.pauseTimers()
+    
+        tabManager.pauseAll()    
+        tabManager.getActiveWebView()?.pauseTimers()    
+        try { android.webkit.CookieManager.getInstance().flush() } catch (_: Throwable) {}    
         super.onPause()
     }
     
