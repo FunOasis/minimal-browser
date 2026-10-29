@@ -135,7 +135,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
             onFullscreenShow = { view, callback -> enterFullscreen(view, callback) },
             onFullscreenHide = { exitFullscreen() },
             onLongPressLink = { url -> showLinkOptions(url) },
-            onFindResult = { active, total -> updateFindCount(active, total) }
+            onFindResult = { active, total -> updateFindCount(active, total) },
             vaultController = vaultController
         )
 
