@@ -29,7 +29,9 @@ import java.net.URI
 class VaultPillController(
     private val activity: MainActivity,
     private val store: SecureCredentialStore,
-    private val currentWebView: () -> WebView?
+    private val currentTabWebView: () -> WebView?,
+    private val popupWebView: () -> WebView?,
+    private val popupOpenerUrl: () -> String?
 ) {
 
     private var host: FrameLayout? = null
@@ -38,8 +40,11 @@ class VaultPillController(
     private val ui = Handler(Looper.getMainLooper())
     private var pendingClipboardClear: Runnable? = null
 
-    // Dedup guard so a duplicate capture (both click + submit firing) only
-    // shows one save dialog.
+    // The WebView that the "Use" action should fill. Set on each
+    // onPasswordFieldDetected. Normally the active tab's WebView; can
+    // also be the popup trap's WebView when a popup login form is up.
+    @Volatile private var activeTarget: WebView? = null
+
     @Volatile private var lastSaveKey: String = ""
     @Volatile private var lastSaveTime: Long = 0L
 
@@ -79,37 +84,57 @@ class VaultPillController(
         return lp
     }
 
+    /**
+     * Whether the given caller WebView is a WebView we should act on:
+     * either the active tab, or the currently open popup trap.
+     */
+    private fun isKnownCaller(caller: WebView): Boolean {
+        val tab = currentTabWebView()
+        val pop = popupWebView()
+        return caller == tab || caller == pop
+    }
+
+    private fun hostForCaller(caller: WebView): String? {
+        val pop = popupWebView()
+        val rawUrl = if (caller == pop) popupOpenerUrl() else caller.url
+        return hostOf(rawUrl ?: "")
+    }
+
     fun onPasswordFieldDetected(caller: WebView) {
         ui.post {
-            val current = currentWebView()
-            if (current == null || caller != current) return@post
-            val url = current.url ?: return@post
-            val h = hostOf(url) ?: return@post
+            if (!isKnownCaller(caller)) return@post
+            val h = hostForCaller(caller) ?: return@post
             val accounts = store.accountsForHost(h)
-            pill?.visibility = if (accounts.isEmpty()) View.GONE else View.VISIBLE
+            if (accounts.isEmpty()) {
+                if (caller == activeTarget) {
+                    pill?.visibility = View.GONE
+                    activeTarget = null
+                }
+            } else {
+                activeTarget = caller
+                pill?.visibility = View.VISIBLE
+            }
         }
     }
 
     fun hidePill() {
         pill?.visibility = View.GONE
+        // Do not clear activeTarget here — hidePill is called during
+        // navigation, and the target WebView is still valid for later
+        // page views. Only onPasswordFieldDetected or explicit reset
+        // clears it.
     }
 
-    /**
-     * Called from the capture script when a login form is submitted.
-     * Shows the "Save password?" dialog when appropriate:
-     *  - both username and password are non-empty
-     *  - no identical credential is already stored
-     *  - the user has not marked the host "never save"
-     *  - we have not already shown the same dialog for the same values
-     *    within the last 3 seconds
-     */
+    fun clearTarget() {
+        activeTarget = null
+        pill?.visibility = View.GONE
+    }
+
     fun onCredentialsCaptured(caller: WebView, username: String, password: String) {
         ui.post {
             if (username.isBlank() || password.isBlank()) return@post
-            val current = currentWebView()
-            if (current == null || caller != current) return@post
-            val url = current.url ?: return@post
-            val h = hostOf(url) ?: return@post
+            if (!isKnownCaller(caller)) return@post
+            val h = hostForCaller(caller) ?: return@post
             val normalised = h.removePrefix("www.")
 
             val existing = store.accountsForHost(normalised)
@@ -139,7 +164,7 @@ class VaultPillController(
                 Toast.makeText(
                     activity, R.string.vault_save_saved, Toast.LENGTH_SHORT
                 ).show()
-                currentWebView()?.let { onPasswordFieldDetected(it) }
+                currentTabWebView()?.let { onPasswordFieldDetected(it) }
             }
             .setNeutralButton(R.string.vault_save_never) { _, _ ->
                 Prefs.get(activity).addVaultNeverSaveHost(host)
@@ -152,9 +177,8 @@ class VaultPillController(
     }
 
     private fun showSheet() {
-        val current = currentWebView() ?: return
-        val url = current.url ?: return
-        val h = hostOf(url) ?: return
+        val target = activeTarget ?: currentTabWebView() ?: return
+        val h = hostForCaller(target) ?: return
         val accounts = store.accountsForHost(h)
         if (accounts.isEmpty()) {
             Toast.makeText(
@@ -163,7 +187,7 @@ class VaultPillController(
             return
         }
 
-        val root = buildSheetContent(h, accounts, current)
+        val root = buildSheetContent(h, accounts, target)
         val dialog = Dialog(activity).apply {
             requestWindowFeature(Window.FEATURE_NO_TITLE)
             setContentView(root)
@@ -265,7 +289,7 @@ class VaultPillController(
                 var passFields = document.querySelectorAll('input[type="password"]');
                 if (passFields.length === 0) return;
                 var userFields = document.querySelectorAll(
-                    'input[type="text"], input[type="email"], input[name*="user"], input[name*="email"], input[id*="user"], input[id*="email"]'
+                    'input[type="text"], input[type="email"], input[name*="user"], input[name*="email"], input[id*="user"], input[id*="email"], input[autocomplete="username"], input[autocomplete="email"]'
                 );
                 var u = ${JSONObject.quote(credential.username)};
                 var p = ${JSONObject.quote(credential.password)};
@@ -349,17 +373,10 @@ class VaultPillController(
                     notify();
                 }
                 setTimeout(notify, 1500);
+                setTimeout(notify, 4000);
             })();
         """.trimIndent()
 
-        /**
-         * Capture script. Fires onCredentialsCaptured when a login form
-         * is submitted — via a submit button click, the Enter key, or a
-         * JS-driven submit() call. Uses capture-phase listeners so we
-         * see the values before the page's own preventDefault() can
-         * clear them. Values are read synchronously at event time, not
-         * after any delay.
-         */
         val CAPTURE_JS: String = """
             (function() {
                 if (window.__minimalBrowserVaultCaptureInstalled) return;
@@ -380,13 +397,13 @@ class VaultPillController(
                     } catch (e) {}
                 }
 
-                function findUsernameField(form) {
-                    if (!form || !form.querySelector) return null;
-                    var pw = form.querySelector('input[type="password"]');
+                function findUsernameField(scope) {
+                    if (!scope || !scope.querySelector) return null;
+                    var pw = scope.querySelector('input[type="password"]');
                     if (!pw) return null;
                     var hints;
                     try {
-                        hints = form.querySelectorAll(
+                        hints = scope.querySelectorAll(
                             'input[autocomplete="username"], ' +
                             'input[autocomplete="email"], ' +
                             'input[type="email"], ' +
@@ -397,84 +414,4 @@ class VaultPillController(
                     for (var i = 0; i < hints.length; i++) {
                         var h = hints[i];
                         if (h === pw) continue;
-                        if (h.type === 'hidden' || h.disabled) continue;
-                        if (!h.offsetParent && h.offsetWidth === 0) continue;
-                        return h;
-                    }
-                    var all;
-                    try {
-                        all = form.querySelectorAll('input[type="text"], input[type="email"]');
-                    } catch (e) { return null; }
-                    var candidate = null;
-                    for (var j = 0; j < all.length; j++) {
-                        var c = all[j];
-                        if (c === pw) continue;
-                        if (!c.offsetParent && c.offsetWidth === 0) continue;
-                        if (c.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING) {
-                            candidate = c;
-                        }
-                    }
-                    return candidate;
-                }
-
-                function readFromForm(form) {
-                    var pw = form.querySelector('input[type="password"]');
-                    if (!pw || !pw.value) return;
-                    var userField = findUsernameField(form);
-                    sendCapture(userField ? userField.value : '', pw.value);
-                }
-
-                document.addEventListener('submit', function(e) {
-                    try {
-                        var form = e.target;
-                        if (!form || form.tagName !== 'FORM') return;
-                        readFromForm(form);
-                    } catch (err) {}
-                }, true);
-
-                document.addEventListener('keydown', function(e) {
-                    try {
-                        if (e.key !== 'Enter') return;
-                        var t = e.target;
-                        if (!t || t.tagName !== 'INPUT' || t.type !== 'password') return;
-                        if (!t.value) return;
-                        var form = t.form;
-                        if (form) {
-                            var userField = findUsernameField(form);
-                            sendCapture(userField ? userField.value : '', t.value);
-                        } else {
-                            sendCapture('', t.value);
-                        }
-                    } catch (err) {}
-                }, true);
-
-                document.addEventListener('click', function(e) {
-                    try {
-                        var t = e.target;
-                        if (!t || !t.closest) return;
-                        var btn = t.closest('button[type="submit"], input[type="submit"]');
-                        if (!btn) return;
-                        var form = btn.form || btn.closest('form');
-                        if (!form) return;
-                        var pw = form.querySelector('input[type="password"]');
-                        if (!pw || !pw.value) return;
-                        var userField = findUsernameField(form);
-                        var u = userField ? userField.value : '';
-                        var p = pw.value;
-                        setTimeout(function() { sendCapture(u, p); }, 50);
-                    } catch (err) {}
-                }, true);
-            })();
-        """.trimIndent()
-
-        fun injectDetection(webView: WebView, url: String?) {
-            if (url.isNullOrBlank()) return
-            if (url.startsWith(Prefs.HOME_URL)) return
-            if (url.startsWith("data:") || url.startsWith("about:")) return
-            try {
-                webView.evaluateJavascript(DETECTION_JS, null)
-                webView.evaluateJavascript(CAPTURE_JS, null)
-            } catch (_: Throwable) {}
-        }
-    }
-}
+                        if (h
