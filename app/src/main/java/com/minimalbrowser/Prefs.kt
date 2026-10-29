@@ -31,25 +31,14 @@ class Prefs private constructor(context: Context) {
         get() = sp.getString(KEY_CUSTOM_FILTERS, "") ?: ""
         set(v) = sp.edit().putString(KEY_CUSTOM_FILTERS, v).apply()
 
-    /**
-     * Minutes of foreground idle time after which a non-active tab is
-     * frozen. 0 means never. Default 10.
-     */
     var freezeIdleForegroundMinutes: Int
         get() = sp.getInt(KEY_FREEZE_FG_MIN, 10)
         set(v) = sp.edit().putInt(KEY_FREEZE_FG_MIN, v.coerceAtLeast(0)).apply()
 
-    /**
-     * Minutes of background age after which every tab -- including the
-     * active one -- is frozen. 0 means never. Default 2.
-     */
     var freezeIdleBackgroundMinutes: Int
         get() = sp.getInt(KEY_FREEZE_BG_MIN, 2)
         set(v) = sp.edit().putInt(KEY_FREEZE_BG_MIN, v.coerceAtLeast(0)).apply()
 
-    /**
-     * Hosts (and subdomains) on which ad blocking is disabled.
-     */
     var disabledHosts: Set<String>
         get() {
             val blob = sp.getString(KEY_DISABLED_HOSTS, "") ?: return emptySet()
@@ -66,9 +55,6 @@ class Prefs private constructor(context: Context) {
             sp.edit().putString(KEY_DISABLED_HOSTS, cleaned.joinToString("\n")).apply()
         }
 
-    /**
-     * Hosts (and subdomains) that should load with a desktop UA.
-     */
     var desktopHosts: Set<String>
         get() {
             val blob = sp.getString(KEY_DESKTOP_HOSTS, "") ?: return emptySet()
@@ -85,9 +71,6 @@ class Prefs private constructor(context: Context) {
             sp.edit().putString(KEY_DESKTOP_HOSTS, cleaned.joinToString("\n")).apply()
         }
 
-    /**
-     * Tracking parameters to strip from main-frame navigations.
-     */
     var removeParams: Set<String>
         get() {
             if (!sp.contains(KEY_REMOVE_PARAMS)) return UrlCleaner.DEFAULT_REMOVE_PARAMS
@@ -105,13 +88,50 @@ class Prefs private constructor(context: Context) {
             sp.edit().putString(KEY_REMOVE_PARAMS, cleaned.joinToString("\n")).apply()
         }
 
-    /**
-     * One-shot flag for the upgrade from the old build that shipped
-     * hardcoded EasyList URLs in the cosmetic warehouse.
-     */
     var legacyDefaultsCleaned: Boolean
         get() = sp.getBoolean(KEY_LEGACY_CLEANED, false)
         set(v) = sp.edit().putBoolean(KEY_LEGACY_CLEANED, v).apply()
+
+    // ------------------------------------------------------------------
+    // Password vault: sites the user said "never save" for
+    // ------------------------------------------------------------------
+
+    var vaultNeverSaveHosts: Set<String>
+        get() {
+            val blob = sp.getString(KEY_VAULT_NEVER, "") ?: return emptySet()
+            if (blob.isBlank()) return emptySet()
+            return blob.lineSequence()
+                .map { it.trim().lowercase() }
+                .filter { it.isNotEmpty() }
+                .toSet()
+        }
+        set(v) {
+            val cleaned = v.map { it.trim().lowercase() }
+                .filter { it.isNotEmpty() }
+                .toSortedSet()
+            sp.edit().putString(KEY_VAULT_NEVER, cleaned.joinToString("\n")).apply()
+        }
+
+    fun isVaultNeverSaveHost(host: String): Boolean {
+        val h = normalize(host)
+        if (h.isEmpty()) return false
+        val set = vaultNeverSaveHosts
+        if (set.isEmpty()) return false
+        var cur = h
+        while (true) {
+            if (cur in set) return true
+            val dot = cur.indexOf('.')
+            if (dot < 0) break
+            cur = cur.substring(dot + 1)
+            if (cur.isEmpty()) break
+        }
+        return false
+    }
+
+    fun addVaultNeverSaveHost(host: String) {
+        val h = normalize(host)
+        if (h.isNotEmpty()) vaultNeverSaveHosts = vaultNeverSaveHosts + h
+    }
 
     // ------------------------------------------------------------------
     // Host-list helpers
@@ -161,8 +181,8 @@ class Prefs private constructor(context: Context) {
         return false
     }
 
-    private fun normalize(host: String): String =    
-    host.trim().lowercase().removePrefix("www.")
+    private fun normalize(host: String): String =
+        host.trim().lowercase().removePrefix("www.")
 
     companion object {
         private const val KEY_HOMEPAGE = "homepage"
@@ -175,6 +195,7 @@ class Prefs private constructor(context: Context) {
         private const val KEY_LEGACY_CLEANED = "legacy_defaults_cleaned"
         private const val KEY_FREEZE_FG_MIN = "freeze_fg_min"
         private const val KEY_FREEZE_BG_MIN = "freeze_bg_min"
+        private const val KEY_VAULT_NEVER = "vault_never_save_hosts"
 
         const val HOME_URL = "minimal://home"
         const val DEFAULT_HOMEPAGE = HOME_URL
