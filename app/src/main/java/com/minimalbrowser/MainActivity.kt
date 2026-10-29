@@ -59,6 +59,8 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     private lateinit var tabManager: TabManager
     private lateinit var history: HistoryStore        
     private lateinit var bookmarks: BookmarkStore
+    private lateinit var vaultStore: SecureCredentialStore
+    private lateinit var vaultController: VaultPillController
     private var lastSeenTabId: Long = -1L
     private var exiting: Boolean = false
     private var isBackgrounded: Boolean = false
