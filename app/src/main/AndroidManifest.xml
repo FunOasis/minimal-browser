@@ -60,6 +60,12 @@
             android:exported="false"
             android:label="@string/bookmarks_title"
             android:parentActivityName=".MainActivity" />
+                
+        <activity
+            android:name=".VaultActivity"
+            android:exported="false"
+            android:label="@string/vault_title"
+            android:parentActivityName=".MainActivity" />
 
     </application>
 
