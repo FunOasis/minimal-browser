@@ -48,6 +48,9 @@
     <item
         android:id="@+id/action_bookmarks"
         android:title="@string/menu_bookmarks" />
+    <item
+        android:id="@+id/action_saved_passwords"
+        android:title="@string/menu_saved_passwords" />
     <item    
         android:id="@+id/action_clear"    
         android:title="@string/menu_clear" />
