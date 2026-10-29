@@ -1,47 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item    
-        android:id="@+id/action_home"    
+    <item
+        android:id="@+id/action_home"
         android:title="@string/menu_home" />
-    <item    
-        android:id="@+id/action_reload"    
+    <item
+        android:id="@+id/action_reload"
         android:title="@string/menu_reload" />
-    <item    
-        android:id="@+id/action_new_tab"    
+    <item
+        android:id="@+id/action_new_tab"
         android:title="@string/menu_new_tab" />
     <item
         android:id="@+id/action_tabs"
         android:title="@string/menu_tabs_placeholder" />
     <item
-        android:id="@+id/action_add_shortcut"
-        android:title="@string/menu_add_shortcut" />
-    <item
-        android:id="@+id/action_bookmark_this_page"
-        android:title="@string/menu_bookmark_this_page" />
-    <item
         android:id="@+id/action_find_in_page"
         android:title="@string/menu_find_in_page" />
     <item
-        android:id="@+id/action_js"
-        android:title="@string/menu_toggle_js" />
-    <item
-        android:id="@+id/action_custom_filters"
-        android:title="@string/menu_custom_filters" />
-    <item
-        android:id="@+id/action_toggle_site_blocking"
-        android:title="@string/menu_disable_site_blocking" />
-    <item
-        android:id="@+id/action_toggle_desktop"
-        android:title="@string/menu_desktop_site" />
-    <item
-        android:id="@+id/action_freeze_settings"
-        android:title="@string/menu_freeze_settings" />
-    <item
-        android:id="@+id/action_reset_site_overrides"
-        android:title="@string/menu_reset_site_overrides" />
-    <item
-        android:id="@+id/action_downloads"
-        android:title="@string/menu_downloads" />
+        android:id="@+id/action_bookmark_this_page"
+        android:title="@string/menu_bookmark_this_page" />
     <item
         android:id="@+id/action_history"
         android:title="@string/menu_history" />
@@ -51,15 +27,12 @@
     <item
         android:id="@+id/action_saved_passwords"
         android:title="@string/menu_saved_passwords" />
-    <item    
-        android:id="@+id/action_clear"    
-        android:title="@string/menu_clear" />
-    <item    
-        android:id="@+id/action_about"    
-        android:title="@string/menu_about" />
-    <item    
-        android:id="@+id/action_clear_webview_data"    
-        android:title="@string/menu_clear_webview_data" />
+    <item
+        android:id="@+id/action_downloads"
+        android:title="@string/menu_downloads" />
+    <item
+        android:id="@+id/action_settings"
+        android:title="@string/menu_settings" />
     <item
         android:id="@+id/action_exit"
         android:title="@string/menu_exit" />
