@@ -111,8 +111,9 @@ object BlobDownloadHelper {
                 "};" +
             "}catch(e){}" +
         "})();"
-
+    
     private class Pending(
+        val token: String,
         val appContext: Context,
         val activity: Activity,
         var fileName: String,
@@ -130,7 +131,10 @@ object BlobDownloadHelper {
 
     private val lock = Any()
 
-    @Volatile private var pending: Pending? = null
+    // Token-keyed so a stale reader script from an abandoned download can
+    // never write its bytes into a newer download's stream.
+    private val pendings =
+        java.util.concurrent.ConcurrentHashMap<String, Pending>()
 
     // ---------------------------------------------------------------------
     // Setup
