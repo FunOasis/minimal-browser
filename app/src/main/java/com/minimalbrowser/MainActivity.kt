@@ -57,7 +57,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     private lateinit var blocker: AdBlocker
     private lateinit var prefs: Prefs
     private lateinit var tabManager: TabManager
-    private lateinit var history: HistoryStore        
+    private lateinit var history: HistoryStore
     private lateinit var bookmarks: BookmarkStore
     private lateinit var vaultStore: SecureCredentialStore
     private lateinit var vaultController: VaultPillController
@@ -100,17 +100,17 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
         blocker = AdBlocker.get(this)
         prefs   = Prefs.get(this)
-        history = HistoryStore.get(this)                
+        history = HistoryStore.get(this)
         bookmarks = BookmarkStore.get(this)
         vaultStore = SecureCredentialStore.get(this)
-vaultController = VaultPillController(
-    activity = this,
-    store = vaultStore,
-    currentTabWebView = { tabManager.getActiveWebView() },
-    popupWebView = { tabManager.activePopupTrap },
-    popupOpenerUrl = { tabManager.popupOpenerUrl }
-)
-vaultController.setHost(binding.webViewContainer)
+        vaultController = VaultPillController(
+            activity = this,
+            store = vaultStore,
+            currentTabWebView = { tabManager.getActiveWebView() },
+            popupWebView = { tabManager.activePopupTrap },
+            popupOpenerUrl = { tabManager.popupOpenerUrl }
+        )
+        vaultController.setHost(binding.webViewContainer)
 
         tabManager = TabManager(
             activity = this,
@@ -156,34 +156,34 @@ vaultController.setHost(binding.webViewContainer)
         binding.blockCountBadge.setOnClickListener { showBlockedCountDetail() }
 
         // ---- Find in page --------------------------------------------
-binding.findClose.setOnClickListener { hideFindBar() }
+        binding.findClose.setOnClickListener { hideFindBar() }
 
-binding.findPrev.setOnClickListener { findNext(false) }
-binding.findNext.setOnClickListener { findNext(true) }
+        binding.findPrev.setOnClickListener { findNext(false) }
+        binding.findNext.setOnClickListener { findNext(true) }
 
-binding.findInput.setOnEditorActionListener { _, actionId, event ->
-    val isSearch = actionId == EditorInfo.IME_ACTION_SEARCH ||
-        actionId == EditorInfo.IME_ACTION_DONE ||
-        (event?.keyCode == KeyEvent.KEYCODE_ENTER &&
-            event.action == KeyEvent.ACTION_DOWN)
-    if (isSearch) {
-        findNext(true)
-        true
-    } else false
-}
+        binding.findInput.setOnEditorActionListener { _, actionId, event ->
+            val isSearch = actionId == EditorInfo.IME_ACTION_SEARCH ||
+                actionId == EditorInfo.IME_ACTION_DONE ||
+                (event?.keyCode == KeyEvent.KEYCODE_ENTER &&
+                    event.action == KeyEvent.ACTION_DOWN)
+            if (isSearch) {
+                findNext(true)
+                true
+            } else false
+        }
 
-binding.findInput.addTextChangedListener(object : TextWatcher {
-    override fun afterTextChanged(s: Editable?) {
-        if (binding.findBar.visibility != View.VISIBLE) return
-        doFind(s?.toString().orEmpty())
-    }
-    override fun beforeTextChanged(
-        s: CharSequence?, st: Int, c: Int, a: Int
-    ) {}
-    override fun onTextChanged(
-        s: CharSequence?, st: Int, b: Int, c: Int
-    ) {}
-})
+        binding.findInput.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) {
+                if (binding.findBar.visibility != View.VISIBLE) return
+                doFind(s?.toString().orEmpty())
+            }
+            override fun beforeTextChanged(
+                s: CharSequence?, st: Int, c: Int, a: Int
+            ) {}
+            override fun onTextChanged(
+                s: CharSequence?, st: Int, b: Int, c: Int
+            ) {}
+        })
 
         binding.addressBar.setOnEditorActionListener { _, actionId, event ->
             val isGo = actionId == EditorInfo.IME_ACTION_GO ||
@@ -212,8 +212,8 @@ binding.findInput.addTextChangedListener(object : TextWatcher {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (binding.findBar.visibility == View.VISIBLE) {    
-                    hideFindBar()    
+                if (binding.findBar.visibility == View.VISIBLE) {
+                    hideFindBar()
                     return
                 }
                 if (tabManager.isInFullscreen()) {
@@ -238,84 +238,87 @@ binding.findInput.addTextChangedListener(object : TextWatcher {
         })
 
         val savedUrls = savedInstanceState?.getStringArrayList(KEY_TAB_URLS)
-val savedActive = savedInstanceState?.getInt(KEY_ACTIVE_TAB, 0) ?: 0
+        val savedActive = savedInstanceState?.getInt(KEY_ACTIVE_TAB, 0) ?: 0
+        // Per-tab JavaScript toggle state, so a config-change recreation
+        // does not silently reset "JS off" back to the global default.
+        val savedJs = savedInstanceState?.getBooleanArrayList(KEY_TAB_JS)
 
-// Two ways an external URL reaches us:
-//   1. ACTION_VIEW from another app's link tap -> intent.data
-//   2. Our own launcher shortcut -> EXTRA_SHORTCUT_URL
-// Earlier builds only read #2, so every external link was
-// silently dropped on cold start.
-val shortcutUrl = intent?.getStringExtra(EXTRA_SHORTCUT_URL)
-val externalUrl = intent?.data?.toString()?.takeIf { isHttpUrl(it) }
+        // Two ways an external URL reaches us:
+        //   1. ACTION_VIEW from another app's link tap -> intent.data
+        //   2. Our own launcher shortcut -> EXTRA_SHORTCUT_URL
+        // Earlier builds only read #2, so every external link was
+        // silently dropped on cold start.
+        val shortcutUrl = intent?.getStringExtra(EXTRA_SHORTCUT_URL)
+        val externalUrl = intent?.data?.toString()?.takeIf { isHttpUrl(it) }
 
-// Consume both so a config-change recreation of this activity
-// does not re-navigate. Android stores intent.data by
-// reference, so mutating it here affects what a later
-// onCreate(savedInstanceState) sees.
-intent?.removeExtra(EXTRA_SHORTCUT_URL)
-intent?.let { it.data = null }
+        // Consume both so a config-change recreation of this activity
+        // does not re-navigate. Android stores intent.data by
+        // reference, so mutating it here affects what a later
+        // onCreate(savedInstanceState) sees.
+        intent?.removeExtra(EXTRA_SHORTCUT_URL)
+        intent?.let { it.data = null }
 
-val disk = if (savedUrls.isNullOrEmpty()) SessionStore.load(this) else null
+        val disk = if (savedUrls.isNullOrEmpty()) SessionStore.load(this) else null
 
-val restoreUrls: List<String>? = when {
-    !savedUrls.isNullOrEmpty() -> savedUrls
-    disk != null -> disk.urls
-    else -> null
-}
-val restoreActive: Int = when {
-    !savedUrls.isNullOrEmpty() -> savedActive
-    disk != null -> disk.activeIndex
-    else -> 0
-}
-
-if (restoreUrls != null) {
-    tabManager.restore(restoreUrls, restoreActive)
-    // Session is preserved. Shortcut loads into the active tab;
-    // an external link opens as a new tab so the restored
-    // session is not clobbered. This mirrors Chrome's
-    // behaviour when an external app hands it a URL.
-    when {
-        !shortcutUrl.isNullOrBlank() -> {
-            tabManager.loadActive(shortcutUrl)
+        val restoreUrls: List<String>? = when {
+            !savedUrls.isNullOrEmpty() -> savedUrls
+            disk != null -> disk.urls
+            else -> null
         }
-        externalUrl != null -> {
-            tabManager.create(url = externalUrl, makeActive = true)
+        val restoreActive: Int = when {
+            !savedUrls.isNullOrEmpty() -> savedActive
+            disk != null -> disk.activeIndex
+            else -> 0
         }
-    }
-} else if (!shortcutUrl.isNullOrBlank()) {
-    tabManager.create(url = shortcutUrl)
-} else if (externalUrl != null) {
-    tabManager.create(url = externalUrl)
-} else {
-    tabManager.create()
-}
+
+        if (restoreUrls != null) {
+            tabManager.restore(restoreUrls, restoreActive, savedJs)
+            // Session is preserved. Shortcut loads into the active tab;
+            // an external link opens as a new tab so the restored
+            // session is not clobbered. This mirrors Chrome's
+            // behaviour when an external app hands it a URL.
+            when {
+                !shortcutUrl.isNullOrBlank() -> {
+                    tabManager.loadActive(shortcutUrl)
+                }
+                externalUrl != null -> {
+                    tabManager.create(url = externalUrl, makeActive = true)
+                }
+            }
+        } else if (!shortcutUrl.isNullOrBlank()) {
+            tabManager.create(url = shortcutUrl)
+        } else if (externalUrl != null) {
+            tabManager.create(url = externalUrl)
+        } else {
+            tabManager.create()
+        }
 
         updateJsBadge()
         updateBlockCountBadge()
     }
 
     override fun onNewIntent(intent: Intent) {
-    super.onNewIntent(intent)
-    setIntent(intent)
+        super.onNewIntent(intent)
+        setIntent(intent)
 
-    val shortcutUrl = intent.getStringExtra(EXTRA_SHORTCUT_URL)
-    intent.removeExtra(EXTRA_SHORTCUT_URL)
-    val externalUrl = intent.data?.toString()?.takeIf { isHttpUrl(it) }
-    intent.data = null
+        val shortcutUrl = intent.getStringExtra(EXTRA_SHORTCUT_URL)
+        intent.removeExtra(EXTRA_SHORTCUT_URL)
+        val externalUrl = intent.data?.toString()?.takeIf { isHttpUrl(it) }
+        intent.data = null
 
-    when {
-        !shortcutUrl.isNullOrBlank() -> {
-            // Shortcut contract: load into the active tab.
-            tabManager.loadActive(shortcutUrl)
-            setAddressBarText(displayUrl(shortcutUrl))
-        }
-        externalUrl != null -> {
-            // External link while the app is already running.
-            // New tab, session preserved.
-            tabManager.create(url = externalUrl, makeActive = true)
+        when {
+            !shortcutUrl.isNullOrBlank() -> {
+                // Shortcut contract: load into the active tab.
+                tabManager.loadActive(shortcutUrl)
+                setAddressBarText(displayUrl(shortcutUrl))
+            }
+            externalUrl != null -> {
+                // External link while the app is already running.
+                // New tab, session preserved.
+                tabManager.create(url = externalUrl, makeActive = true)
+            }
         }
     }
-}
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
@@ -326,6 +329,12 @@ if (restoreUrls != null) {
         for (t in tabs) urls.add(t.url)
         outState.putStringArrayList(KEY_TAB_URLS, urls)
         outState.putInt(KEY_ACTIVE_TAB, tabManager.getActiveIndex())
+        // Persist the per-tab JS toggle alongside the URLs so the
+        // recreated activity restores the exact same state.
+        outState.putBooleanArrayList(
+            KEY_TAB_JS,
+            ArrayList(tabs.map { it.javaScriptEnabled })
+        )
     }
 
     override fun onStop() {
@@ -360,20 +369,20 @@ if (restoreUrls != null) {
         updateBlockCountBadge()
     }
 
-    override fun onPause() {    
+    override fun onPause() {
         isBackgrounded = true
-    
-        val frozen = tabManager.freezeIdleTabs(isBackgrounded = true)    
+
+        val frozen = tabManager.freezeIdleTabs(isBackgrounded = true)
         if (frozen > 0) updateTabBadge()
-    
+
         freezeHandler.removeCallbacks(freezeTick)
-    
-        tabManager.pauseAll()    
-        tabManager.getActiveWebView()?.pauseTimers()    
-        try { android.webkit.CookieManager.getInstance().flush() } catch (_: Throwable) {}    
+
+        tabManager.pauseAll()
+        tabManager.getActiveWebView()?.pauseTimers()
+        try { android.webkit.CookieManager.getInstance().flush() } catch (_: Throwable) {}
         super.onPause()
     }
-    
+
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
@@ -510,166 +519,167 @@ if (restoreUrls != null) {
     // -------------------------------------------------------------------------
     // Suggestions
     // -------------------------------------------------------------------------
-    
+
     private fun maybeShowSuggestions(query: String) {
-    val q = query.trim().lowercase()
-    if (q.isEmpty()) {
-        dismissSuggestions()
-        return
-    }
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) {
+            dismissSuggestions()
+            return
+        }
 
-    val entries = history.loadAll()
-    if (entries.isEmpty()) {
-        dismissSuggestions()
-        return
-    }
+        val entries = history.loadAll()
+        if (entries.isEmpty()) {
+            dismissSuggestions()
+            return
+        }
 
-    // Score every entry. Lower is better; -1 means "no match".
-    val scored = ArrayList<Pair<HistoryStore.Entry, Int>>(entries.size)
-    for (e in entries) {
-        val s = scoreMatch(e, q)
-        if (s >= 0) scored.add(Pair(e, s))
-    }
-    if (scored.isEmpty()) {
-        dismissSuggestions()
-        return
-    }
+        // Score every entry. Lower is better; -1 means "no match".
+        val scored = ArrayList<Pair<HistoryStore.Entry, Int>>(entries.size)
+        for (e in entries) {
+            val s = scoreMatch(e, q)
+            if (s >= 0) scored.add(Pair(e, s))
+        }
+        if (scored.isEmpty()) {
+            dismissSuggestions()
+            return
+        }
 
-    // Prefer prefix-tier matches (scores 0-3). Fall back to loose
-    // contains-tier matches (4-6) only when there are no prefix
-    // matches at all. This is what stops "com" from surfacing
-    // every ".com" site in history: "comicbooks.net" scores 0
-    // (non-TLD label prefix), so amazon.com / google.com stay out.
-    val prefixThreshold = 3
-    val prefix = scored.filter { it.second <= prefixThreshold }
-    val pool = if (prefix.isNotEmpty()) prefix else scored
+        // Prefer prefix-tier matches (scores 0-3). Fall back to loose
+        // contains-tier matches (4-6) only when there are no prefix
+        // matches at all. This is what stops "com" from surfacing
+        // every ".com" site in history: "comicbooks.net" scores 0
+        // (non-TLD label prefix), so amazon.com / google.com stay out.
+        val prefixThreshold = 3
+        val prefix = scored.filter { it.second <= prefixThreshold }
+        val pool = if (prefix.isNotEmpty()) prefix else scored
 
-    val ranked = pool.sortedWith(
-        compareBy<Pair<HistoryStore.Entry, Int>> { it.second }
-            .thenByDescending { it.first.lastVisited }
-            .thenByDescending { it.first.visitCount }
-    )
-
-    val filtered = ranked.take(MAX_VISIBLE_SUGGESTIONS).map { it.first }
-    if (filtered.isEmpty()) {
-        dismissSuggestions()
-        return
-    }
-
-    currentSuggestions = filtered
-
-    val labels = filtered.map { e ->
-        if (e.title.isBlank()) e.url else e.title + "\n" + e.url
-    }
-
-    if (suggestionPopup == null) {
-        buildSuggestionsPopup()
-    }
-    suggestionAdapter?.clear()
-    suggestionAdapter?.addAll(labels)
-    suggestionAdapter?.notifyDataSetChanged()
-
-    val popup = suggestionPopup ?: return
-    if (popup.isShowing) {
-        popup.update(
-            binding.urlPill,
-            binding.urlPill.width,
-            ViewGroup.LayoutParams.WRAP_CONTENT
+        val ranked = pool.sortedWith(
+            compareBy<Pair<HistoryStore.Entry, Int>> { it.second }
+                .thenByDescending { it.first.lastVisited }
+                .thenByDescending { it.first.visitCount }
         )
-    } else {
-        popup.width = binding.urlPill.width
-        popup.height = ViewGroup.LayoutParams.WRAP_CONTENT
-        popup.showAsDropDown(binding.urlPill, 0, 4)
-    }
-}
 
-/**
- * Rank a history entry against the text typed in the URL bar.
- *
- * Returns a score where LOWER is a better match, or -1 for "no match".
- * The TLD of the host (the "com" in "amazon.com") is deliberately
- * excluded from all matching, so typing "com" does not list every
- * .com site — it lists sites whose *name* starts with "com"
- * (comicbooks.net, company.com, ...).
- *
- *   0  a non-TLD host label starts with q     (comicbooks.net -> "com")
- *   1  the whole host starts with q
- *   2  a URL path segment starts with q
- *   3  a title word starts with q
- *   4  a non-TLD host label contains q
- *   5  the URL path contains q
- *   6  the title contains q
- */
-private fun scoreMatch(entry: HistoryStore.Entry, q: String): Int {
-    if (q.isEmpty()) return -1
-    val url = entry.url.lowercase()
-    val title = entry.title.lowercase()
+        val filtered = ranked.take(MAX_VISIBLE_SUGGESTIONS).map { it.first }
+        if (filtered.isEmpty()) {
+            dismissSuggestions()
+            return
+        }
 
-    // If the query already looks like a URL fragment ("example.com",
-    // "https://..."), match the URL string directly. Preserves typing
-    // whole addresses.
-    val looksLikeUrl = q.contains("://") || (q.length >= 4 && q.contains('.'))
-    if (looksLikeUrl) {
-        val urlNoScheme = url.substringAfter("://", url)
-        if (url == q || urlNoScheme == q) return 0
-        if (url.startsWith(q) || urlNoScheme.startsWith(q)) return 1
-        if (url.contains(q)) return 2
-        return -1
-    }
+        currentSuggestions = filtered
 
-    val host = try {
-        java.net.URI(url).host?.lowercase()
-    } catch (_: Exception) {
-        null
-    } ?: return -1
+        val labels = filtered.map { e ->
+            if (e.title.isBlank()) e.url else e.title + "\n" + e.url
+        }
 
-    val labels = host.split('.')
-    // Drop the TLD (last label) from prefix/contains checks so a
-    // query of "com" is not treated as a match on "amazon.com".
-    val nonTldLabels = if (labels.size > 1) labels.dropLast(1) else labels
+        if (suggestionPopup == null) {
+            buildSuggestionsPopup()
+        }
+        suggestionAdapter?.clear()
+        suggestionAdapter?.addAll(labels)
+        suggestionAdapter?.notifyDataSetChanged()
 
-    // 0: any non-TLD host label starts with q
-    for (label in nonTldLabels) {
-        if (label.isNotEmpty() && label.startsWith(q)) return 0
-    }
-
-    // 1: whole host starts with q
-    if (host.startsWith(q)) return 1
-
-    // 2: any path/query segment starts with q
-    val urlNoScheme = url.substringAfter("://", url)
-    val slashIdx = urlNoScheme.indexOf('/')
-    if (slashIdx >= 0) {
-        val path = urlNoScheme.substring(slashIdx)
-        for (seg in path.split('/', '?', '&', '=', '#', ';')) {
-            if (seg.isNotEmpty() && seg.startsWith(q)) return 2
+        val popup = suggestionPopup ?: return
+        if (popup.isShowing) {
+            popup.update(
+                binding.urlPill,
+                binding.urlPill.width,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        } else {
+            popup.width = binding.urlPill.width
+            popup.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            popup.showAsDropDown(binding.urlPill, 0, 4)
         }
     }
 
-    // 3: title starts with q, or any title word starts with q
-    if (title.isNotEmpty() && title.startsWith(q)) return 3
-    for (word in title.split(' ', '-', '_', '/', '.', ',', '(', ')', '[', ']', ':', '|')) {
-        if (word.isNotEmpty() && word.startsWith(q)) return 3
+    /**
+     * Rank a history entry against the text typed in the URL bar.
+     *
+     * Returns a score where LOWER is a better match, or -1 for "no match".
+     * The TLD of the host (the "com" in "amazon.com") is deliberately
+     * excluded from all matching, so typing "com" does not list every
+     * .com site — it lists sites whose *name* starts with "com"
+     * (comicbooks.net, company.com, ...).
+     *
+     *   0  a non-TLD host label starts with q     (comicbooks.net -> "com")
+     *   1  the whole host starts with q
+     *   2  a URL path segment starts with q
+     *   3  a title word starts with q
+     *   4  a non-TLD host label contains q
+     *   5  the URL path contains q
+     *   6  the title contains q
+     */
+    private fun scoreMatch(entry: HistoryStore.Entry, q: String): Int {
+        if (q.isEmpty()) return -1
+        val url = entry.url.lowercase()
+        val title = entry.title.lowercase()
+
+        // If the query already looks like a URL fragment ("example.com",
+        // "https://..."), match the URL string directly. Preserves typing
+        // whole addresses.
+        val looksLikeUrl = q.contains("://") || (q.length >= 4 && q.contains('.'))
+        if (looksLikeUrl) {
+            val urlNoScheme = url.substringAfter("://", url)
+            if (url == q || urlNoScheme == q) return 0
+            if (url.startsWith(q) || urlNoScheme.startsWith(q)) return 1
+            if (url.contains(q)) return 2
+            return -1
+        }
+
+        val host = try {
+            java.net.URI(url).host?.lowercase()
+        } catch (_: Exception) {
+            null
+        } ?: return -1
+
+        val labels = host.split('.')
+        // Drop the TLD (last label) from prefix/contains checks so a
+        // query of "com" is not treated as a match on "amazon.com".
+        val nonTldLabels = if (labels.size > 1) labels.dropLast(1) else labels
+
+        // 0: any non-TLD host label starts with q
+        for (label in nonTldLabels) {
+            if (label.isNotEmpty() && label.startsWith(q)) return 0
+        }
+
+        // 1: whole host starts with q
+        if (host.startsWith(q)) return 1
+
+        // 2: any path/query segment starts with q
+        val urlNoScheme = url.substringAfter("://", url)
+        val slashIdx = urlNoScheme.indexOf('/')
+        if (slashIdx >= 0) {
+            val path = urlNoScheme.substring(slashIdx)
+            for (seg in path.split('/', '?', '&', '=', '#', ';')) {
+                if (seg.isNotEmpty() && seg.startsWith(q)) return 2
+            }
+        }
+
+        // 3: title starts with q, or any title word starts with q
+        if (title.isNotEmpty() && title.startsWith(q)) return 3
+        for (word in title.split(' ', '-', '_', '/', '.', ',', '(', ')', '[', ']', ':', '|')) {
+            if (word.isNotEmpty() && word.startsWith(q)) return 3
+        }
+
+        // 4: any non-TLD host label contains q
+        for (label in nonTldLabels) {
+            if (label.isNotEmpty() && label.contains(q)) return 4
+        }
+
+        // 5: URL path contains q
+        if (slashIdx >= 0) {
+            val path = urlNoScheme.substring(slashIdx)
+            if (path.contains(q)) return 5
+        }
+
+        // 6: title contains q
+        if (title.contains(q)) return 6
+
+        // No match. In particular a TLD-only occurrence (the ".com"
+        // in "amazon.com") is not a match here.
+        return -1
     }
 
-    // 4: any non-TLD host label contains q
-    for (label in nonTldLabels) {
-        if (label.isNotEmpty() && label.contains(q)) return 4
-    }
-
-    // 5: URL path contains q
-    if (slashIdx >= 0) {
-        val path = urlNoScheme.substring(slashIdx)
-        if (path.contains(q)) return 5
-    }
-
-    // 6: title contains q
-    if (title.contains(q)) return 6
-
-    // No match. In particular a TLD-only occurrence (the ".com"
-    // in "amazon.com") is not a match here.
-    return -1
-}
     private fun buildSuggestionsPopup() {
         val listView = ListView(this).apply {
             divider = ColorDrawable(Color.parseColor("#1AFFFFFF"))
@@ -740,36 +750,37 @@ private fun scoreMatch(entry: HistoryStore.Entry, q: String): Int {
     // -------------------------------------------------------------------------
     // Menu / tabs / dialogs
     // -------------------------------------------------------------------------
-private fun showOverflowMenu(anchor: View) {
-    val themedContext = ContextThemeWrapper(
-        this,
-        R.style.ThemeOverlay_MinimalBrowser_PopupMenu
-    )
-    val popup = PopupMenu(themedContext, anchor)
-    popup.menuInflater.inflate(R.menu.browser_menu, popup.menu)
 
-    val tabsItem = popup.menu.findItem(R.id.action_tabs)
-    tabsItem?.title = getString(R.string.menu_tabs, tabManager.count())
+    private fun showOverflowMenu(anchor: View) {
+        val themedContext = ContextThemeWrapper(
+            this,
+            R.style.ThemeOverlay_MinimalBrowser_PopupMenu
+        )
+        val popup = PopupMenu(themedContext, anchor)
+        popup.menuInflater.inflate(R.menu.browser_menu, popup.menu)
 
-    val bmItem = popup.menu.findItem(R.id.action_bookmark_this_page)
-    if (bmItem != null) {
-        val currentUrl = tabManager.getActiveWebView()?.url
-        if (currentUrl.isNullOrBlank() || currentUrl.startsWith("minimal://")) {
-            bmItem.isEnabled = false
-            bmItem.title = getString(R.string.menu_bookmark_this_page)
-        } else if (bookmarks.contains(currentUrl)) {
-            bmItem.title = getString(R.string.menu_remove_bookmark)
-        } else {
-            bmItem.title = getString(R.string.menu_bookmark_this_page)
+        val tabsItem = popup.menu.findItem(R.id.action_tabs)
+        tabsItem?.title = getString(R.string.menu_tabs, tabManager.count())
+
+        val bmItem = popup.menu.findItem(R.id.action_bookmark_this_page)
+        if (bmItem != null) {
+            val currentUrl = tabManager.getActiveWebView()?.url
+            if (currentUrl.isNullOrBlank() || currentUrl.startsWith("minimal://")) {
+                bmItem.isEnabled = false
+                bmItem.title = getString(R.string.menu_bookmark_this_page)
+            } else if (bookmarks.contains(currentUrl)) {
+                bmItem.title = getString(R.string.menu_remove_bookmark)
+            } else {
+                bmItem.title = getString(R.string.menu_bookmark_this_page)
+            }
         }
+
+        colorMenuItemDanger(popup.menu, R.id.action_exit)
+
+        popup.setOnMenuItemClickListener { item -> handleMenu(item) }
+        popup.show()
     }
 
-    colorMenuItemDanger(popup.menu, R.id.action_exit)
-
-    popup.setOnMenuItemClickListener { item -> handleMenu(item) }
-    popup.show()
-}
-    
     /**
      * Recolour a menu item's title to the theme danger red. Preserves
      * the original CharSequence so dynamic titles (like "Tabs (3)")
@@ -786,167 +797,168 @@ private fun showOverflowMenu(anchor: View) {
             }
         }
     }
-private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {
-    R.id.action_home -> { loadHome(); true }
 
-    R.id.action_reload -> { tabManager.reloadActive(); true }
+    private fun handleMenu(item: MenuItem): Boolean = when (item.itemId) {
+        R.id.action_home -> { loadHome(); true }
 
-    R.id.action_new_tab -> {
-        tabManager.create()
-        true
+        R.id.action_reload -> { tabManager.reloadActive(); true }
+
+        R.id.action_new_tab -> {
+            tabManager.create()
+            true
+        }
+
+        R.id.action_tabs -> {
+            showTabSwitcher()
+            true
+        }
+
+        R.id.action_find_in_page -> { showFindBar(); true }
+
+        R.id.action_bookmark_this_page -> { toggleCurrentBookmark(); true }
+
+        R.id.action_history -> {
+            startActivity(Intent(this, HistoryActivity::class.java))
+            true
+        }
+
+        R.id.action_bookmarks -> {
+            startActivity(Intent(this, BookmarksActivity::class.java))
+            true
+        }
+
+        R.id.action_saved_passwords -> {
+            startActivity(Intent(this, VaultActivity::class.java))
+            true
+        }
+
+        R.id.action_downloads -> {
+            startActivity(Intent(this, DownloadsActivity::class.java))
+            true
+        }
+
+        R.id.action_settings -> { showSettingsDialog(); true }
+
+        R.id.action_exit -> {
+            exiting = true
+            SessionStore.clear(this)
+            finishAndRemoveTask()
+            true
+        }
+
+        else -> false
     }
 
-    R.id.action_tabs -> {
-        showTabSwitcher()
-        true
+    private fun showAboutDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_about, null)
+        val versionView = view.findViewById<TextView>(R.id.aboutWebViewVersion)
+        val copyrightView = view.findViewById<TextView>(R.id.aboutCopyright)
+
+        val webViewVersion = try {
+            androidx.webkit.WebViewCompat.getCurrentWebViewPackage(this)
+                ?.versionName
+                ?: "unknown"
+        } catch (_: Throwable) {
+            "unknown"
+        }
+        versionView.text = getString(R.string.about_webview_version, webViewVersion)
+
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setView(view)
+            .setPositiveButton(android.R.string.ok, null)
+            .create()
+
+        copyrightView.setOnClickListener {
+            dialog.dismiss()
+            tabManager.create(
+                url = "https://github.com/FunOasis/minimal-browser/",
+                makeActive = true
+            )
+        }
+
+        dialog.show()
     }
 
-    R.id.action_find_in_page -> { showFindBar(); true }
+    private fun showSettingsDialog() {
+        val host = currentHost()
+        val isDesktop = host?.let { prefs.isDesktopHost(it) } ?: false
+        val isBlocked = host?.let { prefs.isHostDisabled(it) } ?: false
+        val jsEnabled = tabManager.isActiveJsEnabled()
 
-    R.id.action_bookmark_this_page -> { toggleCurrentBookmark(); true }
-
-    R.id.action_history -> {
-        startActivity(Intent(this, HistoryActivity::class.java))
-        true
-    }
-
-    R.id.action_bookmarks -> {
-        startActivity(Intent(this, BookmarksActivity::class.java))
-        true
-    }
-
-    R.id.action_saved_passwords -> {
-        startActivity(Intent(this, VaultActivity::class.java))
-        true
-    }
-
-    R.id.action_downloads -> {
-        startActivity(Intent(this, DownloadsActivity::class.java))
-        true
-    }
-
-    R.id.action_settings -> { showSettingsDialog(); true }
-
-    R.id.action_exit -> {
-        exiting = true
-        SessionStore.clear(this)
-        finishAndRemoveTask()
-        true
-    }
-
-    else -> false
-}
-
-private fun showAboutDialog() {
-    val view = layoutInflater.inflate(R.layout.dialog_about, null)
-    val versionView = view.findViewById<TextView>(R.id.aboutWebViewVersion)
-    val copyrightView = view.findViewById<TextView>(R.id.aboutCopyright)
-
-    val webViewVersion = try {
-        androidx.webkit.WebViewCompat.getCurrentWebViewPackage(this)
-            ?.versionName
-            ?: "unknown"
-    } catch (_: Throwable) {
-        "unknown"
-    }
-    versionView.text = getString(R.string.about_webview_version, webViewVersion)
-
-    val dialog = MaterialAlertDialogBuilder(this)
-        .setView(view)
-        .setPositiveButton(android.R.string.ok, null)
-        .create()
-
-    copyrightView.setOnClickListener {
-        dialog.dismiss()
-        tabManager.create(
-            url = "https://github.com/FunOasis/minimal-browser/",
-            makeActive = true
-        )
-    }
-
-    dialog.show()
-}
-
-private fun showSettingsDialog() {
-    val host = currentHost()
-    val isDesktop = host?.let { prefs.isDesktopHost(it) } ?: false
-    val isBlocked = host?.let { prefs.isHostDisabled(it) } ?: false
-    val jsEnabled = tabManager.isActiveJsEnabled()
-
-    val labels = ArrayList<String>(12)
-    val actions = ArrayList<() -> Unit>(12)
-
-    labels.add(
-        getString(R.string.menu_toggle_js) +
-            ": " + (if (jsEnabled) "On" else "Off")
-    )
-    actions.add { toggleActiveJavaScript() }
-
-    if (host != null) {
-        labels.add(
-            getString(R.string.menu_desktop_site) +
-                ": " + (if (isDesktop) "On" else "Off")
-        )
-        actions.add { toggleDesktopMode() }
+        val labels = ArrayList<String>(12)
+        val actions = ArrayList<() -> Unit>(12)
 
         labels.add(
-            if (isBlocked) getString(R.string.menu_enable_site_blocking)
-            else getString(R.string.menu_disable_site_blocking)
+            getString(R.string.menu_toggle_js) +
+                ": " + (if (jsEnabled) "On" else "Off")
         )
-        actions.add { toggleSiteBlocking() }
-    }
+        actions.add { toggleActiveJavaScript() }
 
-    labels.add(getString(R.string.menu_custom_filters))
-    actions.add { showCustomFiltersDialog() }
+        if (host != null) {
+            labels.add(
+                getString(R.string.menu_desktop_site) +
+                    ": " + (if (isDesktop) "On" else "Off")
+            )
+            actions.add { toggleDesktopMode() }
 
-    labels.add(getString(R.string.menu_freeze_settings))
-    actions.add { showFreezeSettingsDialog() }
-
-    labels.add(getString(R.string.menu_add_shortcut))
-    actions.add { addCurrentPageShortcut() }
-
-    labels.add(getString(R.string.menu_reset_site_overrides))
-    actions.add {
-        prefs.disabledHosts = emptySet()
-        prefs.desktopHosts = emptySet()
-        blocker.invalidateCache()
-        Toast.makeText(
-            this,
-            R.string.site_overrides_reset,
-            Toast.LENGTH_SHORT
-        ).show()
-        tabManager.getActiveWebView()?.let { wv ->
-            WebViewConfigurator.applyUserAgent(this, wv, false)
+            labels.add(
+                if (isBlocked) getString(R.string.menu_enable_site_blocking)
+                else getString(R.string.menu_disable_site_blocking)
+            )
+            actions.add { toggleSiteBlocking() }
         }
-    }
 
-    labels.add(getString(R.string.menu_clear))
-    actions.add { clearCacheNow() }
+        labels.add(getString(R.string.menu_custom_filters))
+        actions.add { showCustomFiltersDialog() }
 
-    labels.add(getString(R.string.menu_clear_webview_data))
-    actions.add { confirmClearWebViewData() }
+        labels.add(getString(R.string.menu_freeze_settings))
+        actions.add { showFreezeSettingsDialog() }
 
-    labels.add(getString(R.string.menu_about))
-    actions.add { showAboutDialog() }
+        labels.add(getString(R.string.menu_add_shortcut))
+        actions.add { addCurrentPageShortcut() }
 
-    MaterialAlertDialogBuilder(this)
-        .setTitle(R.string.menu_settings)
-        .setItems(labels.toTypedArray()) { _, which ->
-            actions[which].invoke()
+        labels.add(getString(R.string.menu_reset_site_overrides))
+        actions.add {
+            prefs.disabledHosts = emptySet()
+            prefs.desktopHosts = emptySet()
+            blocker.invalidateCache()
+            Toast.makeText(
+                this,
+                R.string.site_overrides_reset,
+                Toast.LENGTH_SHORT
+            ).show()
+            tabManager.getActiveWebView()?.let { wv ->
+                WebViewConfigurator.applyUserAgent(this, wv, false)
+            }
         }
-        .setNegativeButton(android.R.string.cancel, null)
-        .show()
-}
 
-private fun clearCacheNow() {
-    tabManager.tabs.forEach { tab ->
-        tab.webView?.clearHistory()
-        tab.webView?.clearCache(true)
+        labels.add(getString(R.string.menu_clear))
+        actions.add { clearCacheNow() }
+
+        labels.add(getString(R.string.menu_clear_webview_data))
+        actions.add { confirmClearWebViewData() }
+
+        labels.add(getString(R.string.menu_about))
+        actions.add { showAboutDialog() }
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.menu_settings)
+            .setItems(labels.toTypedArray()) { _, which ->
+                actions[which].invoke()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
-    Toast.makeText(this, "Cache cleared", Toast.LENGTH_SHORT).show()
-}
 
-private fun showTabSwitcher() {
+    private fun clearCacheNow() {
+        tabManager.tabs.forEach { tab ->
+            tab.webView?.clearHistory()
+            tab.webView?.clearCache(true)
+        }
+        Toast.makeText(this, "Cache cleared", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showTabSwitcher() {
         TabSwitcherSheet(
             context = this,
             tabManager = tabManager,
@@ -963,7 +975,7 @@ private fun showTabSwitcher() {
             }
         ).show()
     }
-        
+
     private fun toggleCurrentBookmark() {
         val wv = tabManager.getActiveWebView() ?: return
         val url = wv.url ?: return
@@ -1052,127 +1064,127 @@ private fun showTabSwitcher() {
         blocker.invalidateCache()
         wv.reload()
     }
-    
-private fun toggleDesktopMode() {
-    val host = currentHost() ?: return
-    val wv = tabManager.getActiveWebView() ?: return
-    val currentUrl = wv.url ?: return
 
-    val nowDesktop: Boolean
-    val targetHost: String
+    private fun toggleDesktopMode() {
+        val host = currentHost() ?: return
+        val wv = tabManager.getActiveWebView() ?: return
+        val currentUrl = wv.url ?: return
 
-    if (prefs.isDesktopHost(host)) {
-        // Turning OFF. Removes the entry that was matching, which
-        // may be the parent domain rather than the m. subdomain.
-        prefs.removeDesktopHostMatching(host)
-        nowDesktop = false
-        targetHost = host
-        Toast.makeText(
-            this,
-            getString(R.string.desktop_off_toast, host),
-            Toast.LENGTH_SHORT
-        ).show()
-    } else {
-        // Turning ON. If we are on a mobile subdomain like
-        // m.youtube.com, add the parent (youtube.com) instead and
-        // navigate to it. The m. subdomain serves mobile HTML
-        // regardless of UA -- only the parent domain honours the
-        // desktop UA string.
-        val parent = mobileSubdomainParent(host)
-        if (parent != null) {
-            prefs.addDesktopHost(parent)
-            targetHost = parent
-        } else {
-            prefs.addDesktopHost(host)
+        val nowDesktop: Boolean
+        val targetHost: String
+
+        if (prefs.isDesktopHost(host)) {
+            // Turning OFF. Removes the entry that was matching, which
+            // may be the parent domain rather than the m. subdomain.
+            prefs.removeDesktopHostMatching(host)
+            nowDesktop = false
             targetHost = host
+            Toast.makeText(
+                this,
+                getString(R.string.desktop_off_toast, host),
+                Toast.LENGTH_SHORT
+            ).show()
+        } else {
+            // Turning ON. If we are on a mobile subdomain like
+            // m.youtube.com, add the parent (youtube.com) instead and
+            // navigate to it. The m. subdomain serves mobile HTML
+            // regardless of UA -- only the parent domain honours the
+            // desktop UA string.
+            val parent = mobileSubdomainParent(host)
+            if (parent != null) {
+                prefs.addDesktopHost(parent)
+                targetHost = parent
+            } else {
+                prefs.addDesktopHost(host)
+                targetHost = host
+            }
+            nowDesktop = true
+            Toast.makeText(
+                this,
+                getString(R.string.desktop_on_toast, targetHost),
+                Toast.LENGTH_SHORT
+            ).show()
         }
-        nowDesktop = true
-        Toast.makeText(
-            this,
-            getString(R.string.desktop_on_toast, targetHost),
-            Toast.LENGTH_SHORT
-        ).show()
-    }
 
-    WebViewConfigurator.applyUserAgent(this, wv, nowDesktop)
+        WebViewConfigurator.applyUserAgent(this, wv, nowDesktop)
 
-    // When we switched to a different host (mobile subdomain ->
-    // parent), navigate to that host's root. Otherwise reload the
-    // current URL. Either way, send the new UA as a per-load header
-    // and force revalidation so we do not serve the cached mobile
-    // HTML from the disk cache.
-    val targetUrl = if (targetHost != host) {
-        "https://" + targetHost + "/"
-    } else {
-        currentUrl
-    }
+        // When we switched to a different host (mobile subdomain ->
+        // parent), navigate to that host's root. Otherwise reload the
+        // current URL. Either way, send the new UA as a per-load header
+        // and force revalidation so we do not serve the cached mobile
+        // HTML from the disk cache.
+        val targetUrl = if (targetHost != host) {
+            "https://" + targetHost + "/"
+        } else {
+            currentUrl
+        }
 
-    val ua = wv.settings.userAgentString ?: ""
-    try {
-        wv.loadUrl(
-            targetUrl,
-            mapOf(
-                "User-Agent" to ua,
-                "Cache-Control" to "no-cache"
+        val ua = wv.settings.userAgentString ?: ""
+        try {
+            wv.loadUrl(
+                targetUrl,
+                mapOf(
+                    "User-Agent" to ua,
+                    "Cache-Control" to "no-cache"
+                )
             )
-        )
-    } catch (t: Throwable) {
-        wv.reload()
-    }
-}
-
-private fun showFreezeSettingsDialog() {
-    val view = layoutInflater.inflate(R.layout.dialog_freeze_settings, null)
-    val fgSpinner = view.findViewById<android.widget.Spinner>(R.id.fgSpinner)
-    val bgSpinner = view.findViewById<android.widget.Spinner>(R.id.bgSpinner)
-
-    val labels = arrayOf("1 min", "2 min", "5 min", "10 min", "30 min", "Never")
-    val values = intArrayOf(1, 2, 5, 10, 30, 0)
-
-    val adapter = ArrayAdapter(
-        this,
-        android.R.layout.simple_spinner_item,
-        labels
-    )
-    adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-    fgSpinner.adapter = adapter
-    bgSpinner.adapter = adapter
-
-    val fgIdx = values.indexOf(prefs.freezeIdleForegroundMinutes)
-        .let { if (it < 0) 3 else it }   // fall back to "10 min"
-    val bgIdx = values.indexOf(prefs.freezeIdleBackgroundMinutes)
-        .let { if (it < 0) 1 else it }   // fall back to "2 min"
-    fgSpinner.setSelection(fgIdx)
-    bgSpinner.setSelection(bgIdx)
-
-    MaterialAlertDialogBuilder(this)
-        .setTitle(R.string.menu_freeze_settings)
-        .setView(view)
-        .setPositiveButton(R.string.action_save) { _, _ ->
-            prefs.freezeIdleForegroundMinutes =
-                values[fgSpinner.selectedItemPosition]
-            prefs.freezeIdleBackgroundMinutes =
-                values[bgSpinner.selectedItemPosition]
+        } catch (t: Throwable) {
+            wv.reload()
         }
-        .setNegativeButton(android.R.string.cancel, null)
-        .show()
-}
+    }
 
-/**
- * If the host is a mobile subdomain like "m.example.com", return the
- * parent domain "example.com". Otherwise null.
- *
- * Only strips a single leading "m." because that is the convention
- * used by every major site (YouTube, Facebook, Twitter, Reddit).
- * Hosts like "mobile.example.com" are left alone because they are
- * not a universal convention.
- */
-private fun mobileSubdomainParent(host: String): String? {
-    if (!host.startsWith("m.")) return null
-    val parent = host.substring(2)
-    if (!parent.contains('.')) return null
-    return parent
-}
+    private fun showFreezeSettingsDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_freeze_settings, null)
+        val fgSpinner = view.findViewById<android.widget.Spinner>(R.id.fgSpinner)
+        val bgSpinner = view.findViewById<android.widget.Spinner>(R.id.bgSpinner)
+
+        val labels = arrayOf("1 min", "2 min", "5 min", "10 min", "30 min", "Never")
+        val values = intArrayOf(1, 2, 5, 10, 30, 0)
+
+        val adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_item,
+            labels
+        )
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        fgSpinner.adapter = adapter
+        bgSpinner.adapter = adapter
+
+        val fgIdx = values.indexOf(prefs.freezeIdleForegroundMinutes)
+            .let { if (it < 0) 3 else it }   // fall back to "10 min"
+        val bgIdx = values.indexOf(prefs.freezeIdleBackgroundMinutes)
+            .let { if (it < 0) 1 else it }   // fall back to "2 min"
+        fgSpinner.setSelection(fgIdx)
+        bgSpinner.setSelection(bgIdx)
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.menu_freeze_settings)
+            .setView(view)
+            .setPositiveButton(R.string.action_save) { _, _ ->
+                prefs.freezeIdleForegroundMinutes =
+                    values[fgSpinner.selectedItemPosition]
+                prefs.freezeIdleBackgroundMinutes =
+                    values[bgSpinner.selectedItemPosition]
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * If the host is a mobile subdomain like "m.example.com", return the
+     * parent domain "example.com". Otherwise null.
+     *
+     * Only strips a single leading "m." because that is the convention
+     * used by every major site (YouTube, Facebook, Twitter, Reddit).
+     * Hosts like "mobile.example.com" are left alone because they are
+     * not a universal convention.
+     */
+    private fun mobileSubdomainParent(host: String): String? {
+        if (!host.startsWith("m.")) return null
+        val parent = host.substring(2)
+        if (!parent.contains('.')) return null
+        return parent
+    }
 
     private fun updateFooterFor(url: String) {
         binding.footerText.visibility =
@@ -1193,56 +1205,56 @@ private fun mobileSubdomainParent(host: String): String? {
     }
 
     private fun confirmClearWebViewData() {
-    MaterialAlertDialogBuilder(this)
-        .setTitle(R.string.clear_webview_data_title)
-        .setMessage(R.string.clear_webview_data_message)
-        .setPositiveButton(R.string.clear_webview_data_confirm) { _, _ ->
-            clearWebViewDataAndRestart()
-        }
-        .setNegativeButton(android.R.string.cancel, null)
-        .show()
-}
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.clear_webview_data_title)
+            .setMessage(R.string.clear_webview_data_message)
+            .setPositiveButton(R.string.clear_webview_data_confirm) { _, _ ->
+                clearWebViewDataAndRestart()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
 
-private fun clearWebViewDataAndRestart() {
-    // 1. Wipe HTTP cache via a throwaway WebView. The current tabs
-    //    are about to be destroyed, so caching them is pointless.
-    try {
-        val throwaway = WebView(this)
-        throwaway.clearCache(true)
-        throwaway.destroy()
-    } catch (_: Throwable) {}
+    private fun clearWebViewDataAndRestart() {
+        // 1. Wipe HTTP cache via a throwaway WebView. The current tabs
+        //    are about to be destroyed, so caching them is pointless.
+        try {
+            val throwaway = WebView(this)
+            throwaway.clearCache(true)
+            throwaway.destroy()
+        } catch (_: Throwable) {}
 
-    // 2. Wipe cookies for every domain.
-    try {
-        val cm = android.webkit.CookieManager.getInstance()
-        cm.removeAllCookies(null)
-        cm.flush()
-    } catch (_: Throwable) {}
+        // 2. Wipe cookies for every domain.
+        try {
+            val cm = android.webkit.CookieManager.getInstance()
+            cm.removeAllCookies(null)
+            cm.flush()
+        } catch (_: Throwable) {}
 
-    // 3. Wipe localStorage, IndexedDB, service workers.
-    try {
-        android.webkit.WebStorage.getInstance().deleteAllData()
-    } catch (_: Throwable) {}
+        // 3. Wipe localStorage, IndexedDB, service workers.
+        try {
+            android.webkit.WebStorage.getInstance().deleteAllData()
+        } catch (_: Throwable) {}
 
-    // 4. Wipe session so the next cold start begins with one home
-    //    tab. Without this, the previous URL is restored and could
-    //    still land on the page whose renderer state is dead.
-    SessionStore.clear(this)
+        // 4. Wipe session so the next cold start begins with one home
+        //    tab. Without this, the previous URL is restored and could
+        //    still land on the page whose renderer state is dead.
+        SessionStore.clear(this)
 
-    // 5. Set exiting so onStop does not re-save the session.
-    exiting = true
+        // 5. Set exiting so onStop does not re-save the session.
+        exiting = true
 
-    Toast.makeText(
-        this,
-        R.string.clear_webview_data_done,
-        Toast.LENGTH_SHORT
-    ).show()
+        Toast.makeText(
+            this,
+            R.string.clear_webview_data_done,
+            Toast.LENGTH_SHORT
+        ).show()
 
-    // 6. Kill the process. Android will spawn a fresh WebView
-    //    renderer on next launch, unaffected by whatever corrupted
-    //    the previous one.
-    finishAndRemoveTask()
-}
+        // 6. Kill the process. Android will spawn a fresh WebView
+        //    renderer on next launch, unaffected by whatever corrupted
+        //    the previous one.
+        finishAndRemoveTask()
+    }
 
     private fun addCurrentPageShortcut() {
         val wv = tabManager.getActiveWebView() ?: return
@@ -1270,210 +1282,210 @@ private fun clearWebViewDataAndRestart() {
     // Ad blocking dialog
     // -------------------------------------------------------------------------
 
-private fun showCustomFiltersDialog() {
-    val store = BlocklistStore.get(this)
-    val cosmeticStore = CosmeticStore.get(this)
-    val view = layoutInflater.inflate(R.layout.dialog_custom_filters, null)
+    private fun showCustomFiltersDialog() {
+        val store = BlocklistStore.get(this)
+        val cosmeticStore = CosmeticStore.get(this)
+        val view = layoutInflater.inflate(R.layout.dialog_custom_filters, null)
 
-    val editSubs            = view.findViewById<EditText>(R.id.editSubscriptions)
-    val warehouseContainer  = view.findViewById<LinearLayout>(R.id.warehouseContainer)
-    val warehouseEmptyText  = view.findViewById<TextView>(R.id.warehouseEmptyText)
-    val editCosmetics       = view.findViewById<EditText>(R.id.editCosmeticSubscriptions)
-    val cosmeticContainer   = view.findViewById<LinearLayout>(R.id.cosmeticWarehouseContainer)
-    val cosmeticEmptyText   = view.findViewById<TextView>(R.id.cosmeticWarehouseEmptyText)
-    val editBlocklist       = view.findViewById<EditText>(R.id.editBlocklist)
-    val editPatterns        = view.findViewById<EditText>(R.id.editPatterns)
-    val statsView           = view.findViewById<TextView>(R.id.customFilterStats)
+        val editSubs            = view.findViewById<EditText>(R.id.editSubscriptions)
+        val warehouseContainer  = view.findViewById<LinearLayout>(R.id.warehouseContainer)
+        val warehouseEmptyText  = view.findViewById<TextView>(R.id.warehouseEmptyText)
+        val editCosmetics       = view.findViewById<EditText>(R.id.editCosmeticSubscriptions)
+        val cosmeticContainer   = view.findViewById<LinearLayout>(R.id.cosmeticWarehouseContainer)
+        val cosmeticEmptyText   = view.findViewById<TextView>(R.id.cosmeticWarehouseEmptyText)
+        val editBlocklist       = view.findViewById<EditText>(R.id.editBlocklist)
+        val editPatterns        = view.findViewById<EditText>(R.id.editPatterns)
+        val statsView           = view.findViewById<TextView>(R.id.customFilterStats)
 
-    editBlocklist.setText(prefs.customBlocklist)
-    editPatterns.setText(prefs.customFilters)
+        editBlocklist.setText(prefs.customBlocklist)
+        editPatterns.setText(prefs.customFilters)
 
-    editSubs.setText(
-        store.listAll().map { it.url }.sorted().joinToString("\n")
-    )
-    editCosmetics.setText(
-        cosmeticStore.listAll().map { it.url }.sorted().joinToString("\n")
-    )
-
-    fun refreshStats() {
-        val s = blocker.stats()
-        statsView.text = getString(
-            R.string.custom_filters_stats,
-            s.hosts,
-            s.patterns,
-            CosmeticFilter.ruleCount()
+        editSubs.setText(
+            store.listAll().map { it.url }.sorted().joinToString("\n")
         )
-    }
+        editCosmetics.setText(
+            cosmeticStore.listAll().map { it.url }.sorted().joinToString("\n")
+        )
 
-    fun refreshBlocklistWarehouse() {
-        val entries = store.listAll()
-        warehouseContainer.removeAllViews()
-        if (entries.isEmpty()) {
-            warehouseEmptyText.visibility = View.VISIBLE
-        } else {
-            warehouseEmptyText.visibility = View.GONE
-            for (e in entries) {
-                val row = layoutInflater.inflate(
-                    R.layout.item_warehouse_list,
-                    warehouseContainer,
-                    false
-                )
-                val urlView = row.findViewById<TextView>(R.id.warehouseUrl)
-                val metaView = row.findViewById<TextView>(R.id.warehouseMeta)
-                val removeBtn = row.findViewById<ImageButton>(R.id.removeWarehouseList)
-
-                urlView.text = e.url
-
-                val hostLabel = e.hostCount.toString() + " hosts"
-                val sizeLabel = humanSize(e.byteSize)
-                val ageLabel = humanAge(e.lastFetched)
-                val prefix = if (e.ok) "" else "FAILED - "
-                metaView.text = prefix + hostLabel + " - " + sizeLabel + " - " + ageLabel
-
-                removeBtn.setOnClickListener {
-                    store.remove(e.url)
-                    blocker.reloadCustomRules()
-                    refreshBlocklistWarehouse()
-                    refreshStats()
-                }
-
-                warehouseContainer.addView(row)
-            }
+        fun refreshStats() {
+            val s = blocker.stats()
+            statsView.text = getString(
+                R.string.custom_filters_stats,
+                s.hosts,
+                s.patterns,
+                CosmeticFilter.ruleCount()
+            )
         }
-        refreshStats()
-    }
 
-    fun refreshCosmeticWarehouse() {
-        val entries = cosmeticStore.listAll()
-        cosmeticContainer.removeAllViews()
-        if (entries.isEmpty()) {
-            cosmeticEmptyText.visibility = View.VISIBLE
-        } else {
-            cosmeticEmptyText.visibility = View.GONE
-            for (e in entries) {
-                val row = layoutInflater.inflate(
-                    R.layout.item_warehouse_list,
-                    cosmeticContainer,
-                    false
-                )
-                val urlView = row.findViewById<TextView>(R.id.warehouseUrl)
-                val metaView = row.findViewById<TextView>(R.id.warehouseMeta)
-                val removeBtn = row.findViewById<ImageButton>(R.id.removeWarehouseList)
+        fun refreshBlocklistWarehouse() {
+            val entries = store.listAll()
+            warehouseContainer.removeAllViews()
+            if (entries.isEmpty()) {
+                warehouseEmptyText.visibility = View.VISIBLE
+            } else {
+                warehouseEmptyText.visibility = View.GONE
+                for (e in entries) {
+                    val row = layoutInflater.inflate(
+                        R.layout.item_warehouse_list,
+                        warehouseContainer,
+                        false
+                    )
+                    val urlView = row.findViewById<TextView>(R.id.warehouseUrl)
+                    val metaView = row.findViewById<TextView>(R.id.warehouseMeta)
+                    val removeBtn = row.findViewById<ImageButton>(R.id.removeWarehouseList)
 
-                urlView.text = e.url
+                    urlView.text = e.url
 
-                val sizeLabel = humanSize(e.byteSize)
-                val ageLabel = humanAge(e.lastFetched)
-                val prefix = if (e.ok) "" else "FAILED - "
-                metaView.text = prefix + sizeLabel + " - " + ageLabel
+                    val hostLabel = e.hostCount.toString() + " hosts"
+                    val sizeLabel = humanSize(e.byteSize)
+                    val ageLabel = humanAge(e.lastFetched)
+                    val prefix = if (e.ok) "" else "FAILED - "
+                    metaView.text = prefix + hostLabel + " - " + sizeLabel + " - " + ageLabel
 
-                removeBtn.setOnClickListener {
-                    cosmeticStore.remove(e.url)
-                    reloadCosmeticFilter(cosmeticStore)
-                    refreshCosmeticWarehouse()
-                    refreshStats()
-                }
-
-                cosmeticContainer.addView(row)
-            }
-        }
-        refreshStats()
-    }
-
-    refreshBlocklistWarehouse()
-    refreshCosmeticWarehouse()
-
-    MaterialAlertDialogBuilder(this)
-        .setTitle(R.string.menu_custom_filters)
-        .setView(view)
-        .setPositiveButton(R.string.action_save) { _, _ ->
-            prefs.customBlocklist = editBlocklist.text.toString()
-            prefs.customFilters = editPatterns.text.toString()
-
-            val desiredBlock = editSubs.text.toString()
-                .lineSequence()
-                .map { it.trim() }
-                .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
-                .toSet()
-
-            val desiredCosmetic = editCosmetics.text.toString()
-                .lineSequence()
-                .map { it.trim() }
-                .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
-                .toSet()
-
-            lifecycleScope.launch(Dispatchers.IO) {
-                // Blocklist warehouse diff.
-                val existingBlock = store.listAll().map { it.url }.toSet()
-                val blockToAdd = desiredBlock.filter { it !in existingBlock }
-                val blockToRemove = existingBlock.filter { it !in desiredBlock }
-                for (u in blockToRemove) store.remove(u)
-
-                // Cosmetic warehouse diff.
-                val existingCosmetic = cosmeticStore.listAll().map { it.url }.toSet()
-                val cosmeticToAdd = desiredCosmetic.filter { it !in existingCosmetic }
-                val cosmeticToRemove = existingCosmetic.filter { it !in desiredCosmetic }
-                for (u in cosmeticToRemove) cosmeticStore.remove(u)
-
-                // Fetch additions.
-                var failCount = 0
-                for (u in blockToAdd) {
-                    if (!store.addAndFetch(u).ok) failCount++
-                }
-                for (u in cosmeticToAdd) {
-                    if (!cosmeticStore.addAndFetch(u).ok) failCount++
-                }
-
-                // Reload cosmetic filter from whatever is on disk
-                // now. Clear if the warehouse ended up empty.
-                val raw = cosmeticStore.loadAllRaw()
-                if (raw.isEmpty()) CosmeticFilter.clear()
-                else CosmeticFilter.updateFrom(raw)
-
-                blocker.reloadCustomRules()
-
-                val added = blockToAdd.size + cosmeticToAdd.size
-                val removed = blockToRemove.size + cosmeticToRemove.size
-
-                withContext(Dispatchers.Main) {
-                    val msg = when {
-                        added == 0 && removed == 0 && failCount == 0 ->
-                            getString(R.string.custom_filters_saved)
-                        failCount > 0 ->
-                            "Saved (" + failCount + " failed)"
-                        removed > 0 && added == 0 -> {
-                            if (removed == 1) "Removed 1 list"
-                            else "Removed " + removed + " lists"
-                        }
-                        else -> "Saved. Added " + added + ", removed " + removed
+                    removeBtn.setOnClickListener {
+                        store.remove(e.url)
+                        blocker.reloadCustomRules()
+                        refreshBlocklistWarehouse()
+                        refreshStats()
                     }
-                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+
+                    warehouseContainer.addView(row)
                 }
             }
+            refreshStats()
         }
-        .setNeutralButton(R.string.action_clear) { _, _ ->
-            prefs.customBlocklist = ""
-            prefs.customFilters = ""
-            blocker.reloadCustomRules()
-            Toast.makeText(this, R.string.custom_filters_cleared, Toast.LENGTH_SHORT).show()
-        }
-        .setNegativeButton(android.R.string.cancel, null)
-        .show()
-}
 
-private fun reloadCosmeticFilter(store: CosmeticStore) {
-    lifecycleScope.launch(Dispatchers.IO) {
-        val raw = store.loadAllRaw()
-        if (raw.isEmpty()) CosmeticFilter.clear()
-        else CosmeticFilter.updateFrom(raw)
+        fun refreshCosmeticWarehouse() {
+            val entries = cosmeticStore.listAll()
+            cosmeticContainer.removeAllViews()
+            if (entries.isEmpty()) {
+                cosmeticEmptyText.visibility = View.VISIBLE
+            } else {
+                cosmeticEmptyText.visibility = View.GONE
+                for (e in entries) {
+                    val row = layoutInflater.inflate(
+                        R.layout.item_warehouse_list,
+                        cosmeticContainer,
+                        false
+                    )
+                    val urlView = row.findViewById<TextView>(R.id.warehouseUrl)
+                    val metaView = row.findViewById<TextView>(R.id.warehouseMeta)
+                    val removeBtn = row.findViewById<ImageButton>(R.id.removeWarehouseList)
+
+                    urlView.text = e.url
+
+                    val sizeLabel = humanSize(e.byteSize)
+                    val ageLabel = humanAge(e.lastFetched)
+                    val prefix = if (e.ok) "" else "FAILED - "
+                    metaView.text = prefix + sizeLabel + " - " + ageLabel
+
+                    removeBtn.setOnClickListener {
+                        cosmeticStore.remove(e.url)
+                        reloadCosmeticFilter(cosmeticStore)
+                        refreshCosmeticWarehouse()
+                        refreshStats()
+                    }
+
+                    cosmeticContainer.addView(row)
+                }
+            }
+            refreshStats()
+        }
+
+        refreshBlocklistWarehouse()
+        refreshCosmeticWarehouse()
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.menu_custom_filters)
+            .setView(view)
+            .setPositiveButton(R.string.action_save) { _, _ ->
+                prefs.customBlocklist = editBlocklist.text.toString()
+                prefs.customFilters = editPatterns.text.toString()
+
+                val desiredBlock = editSubs.text.toString()
+                    .lineSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
+                    .toSet()
+
+                val desiredCosmetic = editCosmetics.text.toString()
+                    .lineSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
+                    .toSet()
+
+                lifecycleScope.launch(Dispatchers.IO) {
+                    // Blocklist warehouse diff.
+                    val existingBlock = store.listAll().map { it.url }.toSet()
+                    val blockToAdd = desiredBlock.filter { it !in existingBlock }
+                    val blockToRemove = existingBlock.filter { it !in desiredBlock }
+                    for (u in blockToRemove) store.remove(u)
+
+                    // Cosmetic warehouse diff.
+                    val existingCosmetic = cosmeticStore.listAll().map { it.url }.toSet()
+                    val cosmeticToAdd = desiredCosmetic.filter { it !in existingCosmetic }
+                    val cosmeticToRemove = existingCosmetic.filter { it !in desiredCosmetic }
+                    for (u in cosmeticToRemove) cosmeticStore.remove(u)
+
+                    // Fetch additions.
+                    var failCount = 0
+                    for (u in blockToAdd) {
+                        if (!store.addAndFetch(u).ok) failCount++
+                    }
+                    for (u in cosmeticToAdd) {
+                        if (!cosmeticStore.addAndFetch(u).ok) failCount++
+                    }
+
+                    // Reload cosmetic filter from whatever is on disk
+                    // now. Clear if the warehouse ended up empty.
+                    val raw = cosmeticStore.loadAllRaw()
+                    if (raw.isEmpty()) CosmeticFilter.clear()
+                    else CosmeticFilter.updateFrom(raw)
+
+                    blocker.reloadCustomRules()
+
+                    val added = blockToAdd.size + cosmeticToAdd.size
+                    val removed = blockToRemove.size + cosmeticToRemove.size
+
+                    withContext(Dispatchers.Main) {
+                        val msg = when {
+                            added == 0 && removed == 0 && failCount == 0 ->
+                                getString(R.string.custom_filters_saved)
+                            failCount > 0 ->
+                                "Saved (" + failCount + " failed)"
+                            removed > 0 && added == 0 -> {
+                                if (removed == 1) "Removed 1 list"
+                                else "Removed " + removed + " lists"
+                            }
+                            else -> "Saved. Added " + added + ", removed " + removed
+                        }
+                        Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .setNeutralButton(R.string.action_clear) { _, _ ->
+                prefs.customBlocklist = ""
+                prefs.customFilters = ""
+                blocker.reloadCustomRules()
+                Toast.makeText(this, R.string.custom_filters_cleared, Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
-}
+
+    private fun reloadCosmeticFilter(store: CosmeticStore) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val raw = store.loadAllRaw()
+            if (raw.isEmpty()) CosmeticFilter.clear()
+            else CosmeticFilter.updateFrom(raw)
+        }
+    }
 
     private fun humanSize(bytes: Long): String {
         return when {
             bytes >= 1024L * 1024L -> (bytes / (1024L * 1024L)).toString() + " MB"
             bytes >= 1024L         -> (bytes / 1024L).toString() + " KB"
-            else                    -> bytes.toString() + " B"
+            else                   -> bytes.toString() + " B"
         }
     }
 
@@ -1508,7 +1520,7 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
         val tabChanged = currentTabId != lastSeenTabId
         lastSeenTabId = currentTabId
 
-        if (tabChanged && binding.findBar.visibility == View.VISIBLE) {    
+        if (tabChanged && binding.findBar.visibility == View.VISIBLE) {
             hideFindBar()
         }
 
@@ -1528,38 +1540,37 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
         binding.progressBar.visibility = View.VISIBLE
         updateBlockCountBadge()
         vaultController.hidePill()
-        
-        if (binding.findBar.visibility == View.VISIBLE) {    
+
+        if (binding.findBar.visibility == View.VISIBLE) {
             binding.findCount.visibility = View.GONE
         }
     }
-    
+
     override fun onPageLoadFinished(view: WebView) {
-    
         if (view !== tabManager.getActiveWebView()) return
-    
+
         binding.swipeRefresh.isRefreshing = false
-    
+
         val url = view.url ?: return
-    
+
         val title = view.title.orEmpty()
-    
+
         val tab = tabManager.findByWebView(view)
-    
+
         val icon = tab?.favicon
-    // Capture the timestamp on the UI thread so racing coroutines
-    // preserve visit order. `record` sorts consumers by lastVisited,
-    // so even if two coroutines race, ordering is correct.
-    
+        // Capture the timestamp on the UI thread so racing coroutines
+        // preserve visit order. `record` sorts consumers by lastVisited,
+        // so even if two coroutines race, ordering is correct.
+
         val now = System.currentTimeMillis()
-        lifecycleScope.launch(Dispatchers.IO) {        
-            history.record(url, title, icon, now)    
-        }    
+        lifecycleScope.launch(Dispatchers.IO) {
+            history.record(url, title, icon, now)
+        }
         updateBlockCountBadge()
-    
-        if (binding.findBar.visibility == View.VISIBLE) {        
-            val q = binding.findInput.text.toString()        
-            if (q.isNotEmpty()) doFind(q)    
+
+        if (binding.findBar.visibility == View.VISIBLE) {
+            val q = binding.findInput.text.toString()
+            if (q.isNotEmpty()) doFind(q)
         }
     }
 
@@ -1573,7 +1584,7 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
             null, errorPageHtml(description, url), "text/html", "utf-8", null
         )
     }
-    
+
     override fun onRenderProcessGone(view: WebView) {
         Toast.makeText(this, "Renderer crashed - restarting", Toast.LENGTH_SHORT).show()
         tabManager.handleWebViewDestroyed(view)
@@ -1597,95 +1608,95 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
     // -------------------------------------------------------------------------
 
     // -------------------------------------------------------------------------
-// Find in page
-// -------------------------------------------------------------------------
+    // Find in page
+    // -------------------------------------------------------------------------
 
-private fun showFindBar() {
-    if (binding.findBar.visibility == View.VISIBLE) {
-        binding.findInput.requestFocus()
-        showKeyboard()
-        return
-    }
+    private fun showFindBar() {
+        if (binding.findBar.visibility == View.VISIBLE) {
+            binding.findInput.requestFocus()
+            showKeyboard()
+            return
+        }
 
-    binding.topBar.visibility = View.GONE
-    binding.findBar.visibility = View.VISIBLE
+        binding.topBar.visibility = View.GONE
+        binding.findBar.visibility = View.VISIBLE
 
-    binding.findInput.setText("")
-    binding.findCount.visibility = View.GONE
-    binding.findPrev.isEnabled = false
-    binding.findNext.isEnabled = false
-
-    binding.findInput.requestFocus()
-    // Delay so the view has been laid out before we ask for the IME.
-    binding.findInput.postDelayed({ showKeyboard() }, 100L)
-}
-
-private fun hideFindBar() {
-    if (binding.findBar.visibility != View.VISIBLE) return
-
-    binding.findBar.visibility = View.GONE
-    binding.topBar.visibility = View.VISIBLE
-
-    binding.findCount.visibility = View.GONE
-    binding.findPrev.isEnabled = false
-    binding.findNext.isEnabled = false
-
-    binding.findInput.setText("")
-    tabManager.getActiveWebView()?.clearMatches()
-
-    hideKeyboard()
-    binding.addressBar.clearFocus()
-}
-
-private fun doFind(query: String) {
-    val wv = tabManager.getActiveWebView() ?: return
-    if (query.isEmpty()) {
-        wv.clearMatches()
+        binding.findInput.setText("")
         binding.findCount.visibility = View.GONE
         binding.findPrev.isEnabled = false
         binding.findNext.isEnabled = false
-        return
+
+        binding.findInput.requestFocus()
+        // Delay so the view has been laid out before we ask for the IME.
+        binding.findInput.postDelayed({ showKeyboard() }, 100L)
     }
-    wv.findAllAsync(query)
-}
 
-private fun findNext(forward: Boolean) {
-    val wv = tabManager.getActiveWebView() ?: return
-    if (binding.findInput.text.isNullOrEmpty()) return
-    wv.findNext(forward)
-}
+    private fun hideFindBar() {
+        if (binding.findBar.visibility != View.VISIBLE) return
 
-private fun updateFindCount(activeMatch: Int, totalMatches: Int) {
-    if (binding.findBar.visibility != View.VISIBLE) return
+        binding.findBar.visibility = View.GONE
+        binding.topBar.visibility = View.VISIBLE
 
-    if (totalMatches == 0) {
-        binding.findCount.text = getString(R.string.find_no_matches)
-        binding.findCount.setTextColor(getColor(R.color.js_badge_off))
+        binding.findCount.visibility = View.GONE
         binding.findPrev.isEnabled = false
         binding.findNext.isEnabled = false
-    } else {
-        // WebView reports the first match as ordinal 0 after
-        // findAllAsync (0-based on the initial pass, 1-based after
-        // findNext). Clamp so the counter always reads 1..total.
-        val ordinal = activeMatch.coerceIn(1, totalMatches)
-        binding.findCount.text =
-            getString(R.string.find_count_format, ordinal, totalMatches)
-        binding.findCount.setTextColor(getColor(R.color.text_secondary))
-        binding.findPrev.isEnabled = true
-        binding.findNext.isEnabled = true
+
+        binding.findInput.setText("")
+        tabManager.getActiveWebView()?.clearMatches()
+
+        hideKeyboard()
+        binding.addressBar.clearFocus()
     }
-    binding.findCount.visibility = View.VISIBLE
-}
 
-private fun showKeyboard() {
-    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-    imm?.showSoftInput(binding.findInput, InputMethodManager.SHOW_IMPLICIT)
-}
+    private fun doFind(query: String) {
+        val wv = tabManager.getActiveWebView() ?: return
+        if (query.isEmpty()) {
+            wv.clearMatches()
+            binding.findCount.visibility = View.GONE
+            binding.findPrev.isEnabled = false
+            binding.findNext.isEnabled = false
+            return
+        }
+        wv.findAllAsync(query)
+    }
 
-private fun hideKeyboard() {
-    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-    imm?.hideSoftInputFromWindow(binding.findInput.windowToken, 0)
-}
+    private fun findNext(forward: Boolean) {
+        val wv = tabManager.getActiveWebView() ?: return
+        if (binding.findInput.text.isNullOrEmpty()) return
+        wv.findNext(forward)
+    }
+
+    private fun updateFindCount(activeMatch: Int, totalMatches: Int) {
+        if (binding.findBar.visibility != View.VISIBLE) return
+
+        if (totalMatches == 0) {
+            binding.findCount.text = getString(R.string.find_no_matches)
+            binding.findCount.setTextColor(getColor(R.color.js_badge_off))
+            binding.findPrev.isEnabled = false
+            binding.findNext.isEnabled = false
+        } else {
+            // WebView reports the first match as ordinal 0 after
+            // findAllAsync (0-based on the initial pass, 1-based after
+            // findNext). Clamp so the counter always reads 1..total.
+            val ordinal = activeMatch.coerceIn(1, totalMatches)
+            binding.findCount.text =
+                getString(R.string.find_count_format, ordinal, totalMatches)
+            binding.findCount.setTextColor(getColor(R.color.text_secondary))
+            binding.findPrev.isEnabled = true
+            binding.findNext.isEnabled = true
+        }
+        binding.findCount.visibility = View.VISIBLE
+    }
+
+    private fun showKeyboard() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.showSoftInput(binding.findInput, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun hideKeyboard() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(binding.findInput.windowToken, 0)
+    }
 
     private fun loadHome() {
         setAddressBarText("")
@@ -1694,7 +1705,7 @@ private fun hideKeyboard() {
 
     private fun displayUrl(url: String): String =
         if (url.startsWith("minimal://")) "" else url
-    
+
     private fun isHttpUrl(url: String): Boolean =
         url.startsWith("http://", ignoreCase = true) ||
         url.startsWith("https://", ignoreCase = true)
@@ -1714,7 +1725,7 @@ private fun hideKeyboard() {
             "https://search.brave.com/search?q=" + URLEncoder.encode(input, "UTF-8")
         else -> "https://" + input
     }
-    
+
     private fun errorPageHtml(description: String, url: String?): String {
         val safeDesc = description.replace("&", "&amp;").replace("<", "&lt;")
         val safeUrl  = (url ?: "").replace("&", "&amp;").replace("<", "&lt;")
@@ -1742,6 +1753,7 @@ private fun hideKeyboard() {
         private const val MAX_VISIBLE_SUGGESTIONS = 6
         private const val KEY_TAB_URLS = "mb_tab_urls"
         private const val KEY_ACTIVE_TAB = "mb_active_tab"
+        private const val KEY_TAB_JS = "mb_tab_js"
 
         private const val FREEZE_CHECK_INTERVAL_MS = 60_000L
     }
