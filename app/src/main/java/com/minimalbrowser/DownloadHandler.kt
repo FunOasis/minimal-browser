@@ -2,9 +2,12 @@ package com.minimalbrowser
 
 import android.app.Activity
 import android.content.ContentValues
+import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.util.Log
 import android.webkit.CookieManager
@@ -44,6 +47,14 @@ import java.net.URLDecoder
  *   external Downloads.
  *   API 26-28: app-specific external Downloads. No runtime permission.
  *
+ * Threading / lifecycle:
+ *   The download coroutine runs on Dispatchers.IO and can outlive the
+ *   Activity that started it (user presses back/home mid-download).
+ *   It therefore captures ONLY the application context -- never the
+ *   Activity -- so a long transfer can never leak a destroyed
+ *   Activity. Toasts are posted to the main thread with the
+ *   application context.
+ *
  * Diagnostic toasts carry a suffix identifying the failing stage.
  */
 object DownloadHandler {
@@ -59,6 +70,8 @@ object DownloadHandler {
 
     private val CD_FILENAME_RE =
         Regex("filename\\*?=(?:UTF-8'')?[\"']?([^\"';\\r\\n]+)", RegexOption.IGNORE_CASE)
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     fun handle(
         activity: Activity,
@@ -106,9 +119,11 @@ object DownloadHandler {
 
                 toast(activity, activity.getString(R.string.download_started, filename))
 
+                // Everything past this point may outlive the Activity.
+                val app = activity.applicationContext
                 CoroutineScope(Dispatchers.IO).launch {
                     runDownload(
-                        activity, url, filename, ua, referer, cookie,
+                        app, url, filename, ua, referer, cookie,
                         mimeType, contentLength
                     )
                 }
@@ -131,7 +146,7 @@ object DownloadHandler {
     // -------------------------------------------------------------------------
 
     private fun runDownload(
-        activity: Activity,
+        app: Context,
         startUrl: String,
         filename: String,
         userAgent: String,
@@ -163,7 +178,7 @@ object DownloadHandler {
 
                     when {
                         code in 200..299 -> {
-                            streamToDisk(activity, conn, filename, mimeType, declaredLength)
+                            streamToDisk(app, conn, filename, mimeType, declaredLength)
                             return
                         }
                         code in 300..399 -> {
@@ -182,14 +197,14 @@ object DownloadHandler {
             throw Exception("too many redirects")
         } catch (t: Throwable) {
             Log.e(TAG, "download failed url=" + startUrl, t)
-            DownloadNotifications.complete(activity, filename, success = false)
-            toastOnUi(activity, activity.getString(R.string.download_failed) +
+            DownloadNotifications.complete(app, filename, success = false)
+            toastOnUi(app, app.getString(R.string.download_failed) +
                 ": " + t.javaClass.simpleName)
         }
     }
 
     private fun streamToDisk(
-        activity: Activity,
+        app: Context,
         conn: HttpURLConnection,
         filename: String,
         mimeType: String?,
@@ -202,12 +217,12 @@ object DownloadHandler {
                          else if (declaredLength > 0L) declaredLength
                          else -1L
 
-        DownloadNotifications.start(activity, filename, totalBytes)
+        DownloadNotifications.start(app, filename, totalBytes)
 
         val input = conn.inputStream
         var output: OutputStream? = null
         var mediaUri: Uri? = null
-        var fileTarget: File? = null        
+        var fileTarget: File? = null
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
@@ -218,14 +233,14 @@ object DownloadHandler {
                     )
                     put(MediaStore.Downloads.IS_PENDING, 1)
                 }
-                val resolver = activity.contentResolver
+                val resolver = app.contentResolver
                 val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                     ?: throw Exception("MediaStore insert null")
                 mediaUri = uri
                 output = resolver.openOutputStream(uri)
                     ?: throw Exception("openOutputStream null")
             } else {
-                val dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                val dir = app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
                     ?: throw Exception("no external files dir")
                 if (!dir.exists()) dir.mkdirs()
                 // Never silently truncate an existing file with the same
@@ -251,7 +266,7 @@ object DownloadHandler {
                     if (pct != lastPct) {
                         lastPct = pct
                         DownloadNotifications.progress(
-                            activity, filename, bytesWritten, totalBytes
+                            app, filename, bytesWritten, totalBytes
                         )
                     }
                 }
@@ -271,15 +286,15 @@ object DownloadHandler {
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.IS_PENDING, 0)
                 }
-                activity.contentResolver.update(mediaUri, values, null, null)
-                LocalDownloadsStore.get(activity).record(
+                app.contentResolver.update(mediaUri, values, null, null)
+                LocalDownloadsStore.get(app).record(
                     filename,
                     mediaUri.toString(),
                     mimeType ?: "application/octet-stream",
                     bytesWritten
                 )
             } else if (fileTarget != null) {
-                LocalDownloadsStore.get(activity).record(
+                LocalDownloadsStore.get(app).record(
                     filename,
                     Uri.fromFile(fileTarget).toString(),
                     mimeType ?: "application/octet-stream",
@@ -287,17 +302,17 @@ object DownloadHandler {
                 )
             }
 
-            DownloadNotifications.complete(activity, filename, success = true)
-            toastOnUi(activity, activity.getString(R.string.download_saved, filename))
+            DownloadNotifications.complete(app, filename, success = true)
+            toastOnUi(app, app.getString(R.string.download_saved, filename))
         } catch (t: Throwable) {
             Log.e(TAG, "stream failed", t)
             if (mediaUri != null) {
-                try { activity.contentResolver.delete(mediaUri, null, null) }
+                try { app.contentResolver.delete(mediaUri, null, null) }
                 catch (_: Throwable) {}
             }
             fileTarget?.let { try { it.delete() } catch (_: Throwable) {} }
-            DownloadNotifications.complete(activity, filename, success = false)
-            toastOnUi(activity, activity.getString(R.string.download_failed) +
+            DownloadNotifications.complete(app, filename, success = false)
+            toastOnUi(app, app.getString(R.string.download_failed) +
                 ": " + t.javaClass.simpleName)
         } finally {
             try { output?.close() } catch (_: Throwable) {}
@@ -351,7 +366,7 @@ object DownloadHandler {
         }
         return s
     }
-        
+
     internal fun uniqueFile(dir: File, fileName: String): File {
         var f = File(dir, fileName)
         if (!f.exists()) return f
@@ -368,15 +383,20 @@ object DownloadHandler {
     // Toast helpers
     // -------------------------------------------------------------------------
 
+    /** Call on the UI thread with a still-alive Activity (download start). */
     private fun toast(activity: Activity, msg: String) {
         Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
     }
 
-    private fun toastOnUi(activity: Activity, msg: String) {
-        try {
-            activity.runOnUiThread {
-                Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
-            }
-        } catch (_: Throwable) {}
+    /**
+     * Post a toast from any thread using an application context. Safe
+     * even if the originating Activity has been destroyed meanwhile.
+     */
+    private fun toastOnUi(context: Context, msg: String) {
+        mainHandler.post {
+            try {
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            } catch (_: Throwable) {}
+        }
     }
 }
