@@ -57,6 +57,7 @@ class VaultPillController(
             if (pill == null) pill = buildPill()
             newHost.addView(pill, buildPillParams())
             pill?.visibility = View.GONE
+            pill?.bringToFront()
         }
     }
 
@@ -100,6 +101,19 @@ class VaultPillController(
         return hostOf(rawUrl ?: "")
     }
 
+    /**
+     * Make the pill visible. bringToFront() on every show is essential:
+     * the pill is added to webViewContainer during onCreate, and every
+     * tab's WebView is added to the SAME FrameLayout afterwards -- so
+     * without re-ordering, the pill sits BELOW the WebViews in the
+     * z-order and is permanently covered.
+     */
+    private fun showPill() {
+        val p = pill ?: return
+        p.bringToFront()
+        p.visibility = View.VISIBLE
+    }
+
     fun onPasswordFieldDetected(caller: WebView) {
         ui.post {
             if (!isKnownCaller(caller)) return@post
@@ -112,37 +126,37 @@ class VaultPillController(
                 }
             } else {
                 activeTarget = caller
-                pill?.visibility = View.VISIBLE
+                showPill()
             }
         }
     }
 
     fun hidePill() {
-    pill?.visibility = View.GONE
-    // Do not clear activeTarget here — hidePill is called during
-    // navigation, and the target WebView is still valid for later
-    // page views. Only onPasswordFieldDetected or explicit reset
-    // clears it.
-}
+        pill?.visibility = View.GONE
+        // Do not clear activeTarget here — hidePill is called during
+        // navigation, and the target WebView is still valid for later
+        // page views. Only onPasswordFieldDetected or explicit reset
+        // clears it.
+    }
 
-/**
- * Re-run password-field detection on an already-loaded page. Called
- * when switching to a tab that was loaded while in the background:
- * onPageFinished doesn't fire again, so the initial detection needs
- * a nudge. Idempotent, and a no-op when the page has no password
- * field.
- */
-fun recheck(webView: WebView) {
-    try {
-        webView.evaluateJavascript(
-            "(function(){try{" +
-                "if(document.querySelector('input[type=\"password\"]'))" +
-                "window.MinimalBrowserVaultBridge.onPasswordFieldDetected();" +
-            "}catch(e){}})();",
-            null
-        )
-    } catch (_: Throwable) {}
-}
+    /**
+     * Re-run password-field detection on an already-loaded page. Called
+     * when switching to a tab that was loaded while in the background:
+     * onPageFinished doesn't fire again, so the initial detection needs
+     * a nudge. Idempotent, and a no-op when the page has no password
+     * field.
+     */
+    fun recheck(webView: WebView) {
+        try {
+            webView.evaluateJavascript(
+                "(function(){try{" +
+                    "if(document.querySelector('input[type=\"password\"]'))" +
+                    "window.MinimalBrowserVaultBridge.onPasswordFieldDetected();" +
+                "}catch(e){}})();",
+                null
+            )
+        } catch (_: Throwable) {}
+    }
 
     fun clearTarget() {
         activeTarget = null
@@ -319,23 +333,23 @@ fun recheck(webView: WebView) {
                     el.dispatchEvent(new Event('change', { bubbles: true }));
                 }
                 if (userFields.length > 0) setVal(userFields[0], u);
-if (passFields.length === 1) {
-    setVal(passFields[0], p);
-} else {
-    for (var i = 0; i < passFields.length; i++) {
-        var pf = passFields[i];
-        var ac = (pf.getAttribute('autocomplete') || '').toLowerCase();
-        var nm = (
-            (pf.getAttribute('name') || '') + ' ' +
-            (pf.getAttribute('id') || '')
-        ).toLowerCase();
-        var isNew = ac === 'new-password' || /new|confirm|repeat/.test(nm);
-        if (!isNew) {
-            setVal(pf, p);
-            break;
-        }
-    }
-}
+                if (passFields.length === 1) {
+                    setVal(passFields[0], p);
+                } else {
+                    for (var i = 0; i < passFields.length; i++) {
+                        var pf = passFields[i];
+                        var ac = (pf.getAttribute('autocomplete') || '').toLowerCase();
+                        var nm = (
+                            (pf.getAttribute('name') || '') + ' ' +
+                            (pf.getAttribute('id') || '')
+                        ).toLowerCase();
+                        var isNew = ac === 'new-password' || /new|confirm|repeat/.test(nm);
+                        if (!isNew) {
+                            setVal(pf, p);
+                            break;
+                        }
+                    }
+                }
             })();
         """.trimIndent()
         try {
