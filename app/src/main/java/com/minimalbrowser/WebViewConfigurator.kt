@@ -3,7 +3,6 @@ package com.minimalbrowser
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
-import android.view.View
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -40,25 +39,25 @@ object WebViewConfigurator {
         return ua
     }
 
-/**
- * Set the UA on a WebView for desktop or mobile.
- *
- * Deliberately does NOT change useWideViewPort between modes. That
- * was tried and reverted: flipping useWideViewPort to false in
- * desktop mode breaks layout badly on any site that relies on its
- * own viewport meta, and can make the page unrenderable. The UA
- * switch alone is what Chrome originally did for "Request desktop
- * site" and is much safer.
- */
-fun applyUserAgent(context: Context, webView: WebView, desktop: Boolean) {
-    val s = webView.settings
-    val target = if (desktop) DESKTOP_UA else mobileUserAgent(context)
-    if (target.isNotBlank() && s.userAgentString != target) {
-        s.userAgentString = target
+    /**
+     * Set the UA on a WebView for desktop or mobile.
+     *
+     * Deliberately does NOT change useWideViewPort between modes. That
+     * was tried and reverted: flipping useWideViewPort to false in
+     * desktop mode breaks layout badly on any site that relies on its
+     * own viewport meta, and can make the page unrenderable. The UA
+     * switch alone is what Chrome originally did for "Request desktop
+     * site" and is much safer.
+     */
+    fun applyUserAgent(context: Context, webView: WebView, desktop: Boolean) {
+        val s = webView.settings
+        val target = if (desktop) DESKTOP_UA else mobileUserAgent(context)
+        if (target.isNotBlank() && s.userAgentString != target) {
+            s.userAgentString = target
+        }
+        s.useWideViewPort = true
+        s.loadWithOverviewMode = true
     }
-    s.useWideViewPort = true
-    s.loadWithOverviewMode = true
-}
 
     @SuppressLint("SetJavaScriptEnabled")
     fun apply(webView: WebView, javaScriptEnabled: Boolean) {
@@ -73,14 +72,14 @@ fun applyUserAgent(context: Context, webView: WebView, desktop: Boolean) {
         s.builtInZoomControls  = true
         s.displayZoomControls  = false
         // Route target="_blank" links and window.open() through
-// WebChromeClient.onCreateWindow so TabManager can open them in
-// a real new tab instead of navigating the current one.
-// Without supportMultipleWindows=true, WebView silently treats
-// target="_blank" as target="_self" — every ad popup then
-// pollutes the current tab's navigation history.
+        // WebChromeClient.onCreateWindow so TabManager can open them in
+        // a real new tab instead of navigating the current one.
+        // Without supportMultipleWindows=true, WebView silently treats
+        // target="_blank" as target="_self" — every ad popup then
+        // pollutes the current tab's navigation history.
         s.setSupportMultipleWindows(true)
-// Only allow window.open() calls that originate from a user
-// gesture (click/tap). Automatic popups get dropped.
+        // Only allow window.open() calls that originate from a user
+        // gesture (click/tap). Automatic popups get dropped.
         s.javaScriptCanOpenWindowsAutomatically = false
 
         // --- Cache -------------------------------------------------------
@@ -102,10 +101,16 @@ fun applyUserAgent(context: Context, webView: WebView, desktop: Boolean) {
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(s, false)
         }
 
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        // NOTE: a previous build forced LAYER_TYPE_HARDWARE here. That is
+        // an anti-pattern for WebView: the view already renders on the
+        // GPU, and a permanent hardware layer pins a full-screen offscreen
+        // texture per tab (~10-30 MB each at phone resolution), which
+        // multiplies across the 10-tab limit and can blur text and hurt
+        // scroll performance on some devices. The default LAYER_TYPE_NONE
+        // is correct, so we simply do not touch the layer type.
 
         // --- GPU relief --------------------------------------------------
-        webView.overScrollMode = View.OVER_SCROLL_NEVER
+        webView.overScrollMode = WebView.OVER_SCROLL_NEVER
         webView.isVerticalScrollBarEnabled = false
         webView.isHorizontalScrollBarEnabled = false
 
