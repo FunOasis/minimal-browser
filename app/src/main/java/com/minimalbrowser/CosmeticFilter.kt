@@ -104,7 +104,14 @@ object CosmeticFilter {
         }
         val selectors = if (current == null) FALLBACK_SELECTORS
                         else current.selectorsFor(url)
-        if (selectors.isEmpty()) return ""
+        if (selectors.isEmpty()) {
+            // Cache the miss too. Without this, every onPageFinished on
+            // a host with no rules (i.e. every host while the cosmetic
+            // warehouse is empty) re-walked the selector sets and built
+            // a throwaway host key.
+            synchronized(cssCache) { cssCache[key] = "" }
+            return ""
+        }
         val css = buildCss(selectors)
         synchronized(cssCache) {
             cssCache[key] = css
