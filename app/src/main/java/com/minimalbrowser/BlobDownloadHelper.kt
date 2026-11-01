@@ -6,6 +6,8 @@ import android.content.Context
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
@@ -48,6 +50,14 @@ import java.io.OutputStream
  *   deliverChunk() -- one call per 1 MB window; writes bytes.
  *   finalizeDownload() on isLast=true.
  *
+ * Threading / lifecycle:
+ *   Bridge callbacks arrive on the WebView's JavaBridge thread and can
+ *   outlive the Activity (chunked transfer of a large canvas export
+ *   while the user navigates away). Pending therefore stores ONLY the
+ *   application context -- a strong Activity reference held for the
+ *   whole transfer was a leak that survived until the next blob
+ *   download started.
+ *
  * Diagnostic toasts carry a suffix identifying the failing stage:
  *     ": openOutput ...", ": js-eval", ": blob-not-captured ...",
  *     ": write", ": decode", ": <msg from page>", ": data-parse",
@@ -60,7 +70,8 @@ object BlobDownloadHelper {
     const val JS_NAME = "MBBlobBridge"
 
     private const val CHUNK_SIZE = 1 * 1024 * 1024
-    private const val NAME_MAP_TTL_MS = 60_000L
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
      * Page-start capture hook. Idempotent via window markers.
@@ -111,11 +122,10 @@ object BlobDownloadHelper {
                 "};" +
             "}catch(e){}" +
         "})();"
-    
+
     private class Pending(
         val token: String,
         val appContext: Context,
-        val activity: Activity,
         var fileName: String,
         val mime: String
     ) {
@@ -163,7 +173,7 @@ object BlobDownloadHelper {
     // ---------------------------------------------------------------------
     // Entry point
     // ---------------------------------------------------------------------
-    
+
     fun start(
         activity: Activity,
         webView: WebView,
@@ -187,7 +197,6 @@ object BlobDownloadHelper {
         val p = Pending(
             token = token,
             appContext = activity.applicationContext,
-            activity = activity,
             fileName = fileName.ifBlank {
                 "download_" + System.currentTimeMillis() + ".bin"
             },
@@ -218,7 +227,7 @@ object BlobDownloadHelper {
      * Runs on the WebView bridge thread. Synchronous from JS's point of
      * view: JS blocks here until we return.
      */
-        
+
     @JavascriptInterface
     fun begin(token: String, suggestedName: String, totalBytes: Long) {
         val p = pendings[token] ?: return
@@ -233,15 +242,15 @@ object BlobDownloadHelper {
             Log.w(TAG, "openOutput failed: " + err)
             p.failed = true
             pendings.remove(token, p)
-            toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
+            toastOnUi(p.appContext, p.appContext.getString(R.string.download_failed) +
                 ": openOutput " + err)
             return
         }
         p.opened = true
         Log.i(TAG, "begin name=" + p.fileName + " total=" + totalBytes)
-        DownloadNotifications.start(p.activity, p.fileName, totalBytes)
-    }    
-        
+        DownloadNotifications.start(p.appContext, p.fileName, totalBytes)
+    }
+
     @JavascriptInterface
     fun deliverChunk(token: String, b64: String, isLast: Boolean) {
         val p = pendings[token] ?: return
@@ -274,8 +283,8 @@ object BlobDownloadHelper {
                     p.failed = true
                     finalizeDownload(p, success = false)
                     pendings.remove(token, p)
-                    toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
-                        ": write")
+                    toastOnUi(p.appContext,
+                        p.appContext.getString(R.string.download_failed) + ": write")
                     return
                 }
 
@@ -285,7 +294,7 @@ object BlobDownloadHelper {
                     if (pct != p.lastNotifPct) {
                         p.lastNotifPct = pct
                         DownloadNotifications.progress(
-                            p.activity, p.fileName, p.bytesWritten, p.totalBytes
+                            p.appContext, p.fileName, p.bytesWritten, p.totalBytes
                         )
                     }
                 }
@@ -294,8 +303,8 @@ object BlobDownloadHelper {
                 p.failed = true
                 finalizeDownload(p, success = false)
                 pendings.remove(token, p)
-                toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
-                    ": decode")
+                toastOnUi(p.appContext,
+                    p.appContext.getString(R.string.download_failed) + ": decode")
                 return
             }
         }
@@ -304,14 +313,14 @@ object BlobDownloadHelper {
             Log.i(TAG, "complete, bytes=" + p.bytesWritten)
             finalizeDownload(p, success = true)
             pendings.remove(token, p)
-            DownloadNotifications.complete(p.activity, p.fileName, success = true)
+            DownloadNotifications.complete(p.appContext, p.fileName, success = true)
             toastOnUi(
-                p.activity,
-                p.activity.getString(R.string.download_saved, p.fileName)
+                p.appContext,
+                p.appContext.getString(R.string.download_saved, p.fileName)
             )
         }
     }
-    
+
     @JavascriptInterface
     fun deliverError(token: String, message: String) {
         val p = pendings[token] ?: return
@@ -320,9 +329,11 @@ object BlobDownloadHelper {
         finalizeDownload(p, success = false)
         pendings.remove(token, p)
         Log.w(TAG, "JS reported error: " + message)
-        if (wasOpened) DownloadNotifications.complete(p.activity, p.fileName, success = false)
+        if (wasOpened) {
+            DownloadNotifications.complete(p.appContext, p.fileName, success = false)
+        }
         val short = if (message.length > 80) message.substring(0, 80) else message
-        toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
+        toastOnUi(p.appContext, p.appContext.getString(R.string.download_failed) +
             ": " + short)
     }
 
@@ -336,6 +347,7 @@ object BlobDownloadHelper {
         fileName: String,
         mimeType: String?
     ) {
+        val app = activity.applicationContext
         val parsed = parseDataUrl(dataUrl) ?: run {
             toast(activity, activity.getString(R.string.download_failed) + ": data-parse")
             return
@@ -346,25 +358,20 @@ object BlobDownloadHelper {
         DownloadNotifications.start(activity, name, parsed.bytes.size.toLong())
 
         CoroutineScope(Dispatchers.IO).launch {
-            val result = writeAllAtOnce(
-                activity.applicationContext, name, mime, parsed.bytes
-            )
+            val result = writeAllAtOnce(app, name, mime, parsed.bytes)
             val ok = result.first
             val uri = result.second
             if (ok) {
                 uri?.let {
-                    LocalDownloadsStore.get(activity).record(
+                    LocalDownloadsStore.get(app).record(
                         name, it, mime, parsed.bytes.size.toLong()
                     )
                 }
-                DownloadNotifications.complete(activity, name, success = true)
-                uiToast(activity, activity.getString(R.string.download_saved, name))
+                DownloadNotifications.complete(app, name, success = true)
+                toastOnUi(app, app.getString(R.string.download_saved, name))
             } else {
-                DownloadNotifications.complete(activity, name, success = false)
-                uiToast(
-                    activity,
-                    activity.getString(R.string.download_failed) + ": data-write"
-                )
+                DownloadNotifications.complete(app, name, success = false)
+                toastOnUi(app, app.getString(R.string.download_failed) + ": data-write")
             }
         }
     }
@@ -372,7 +379,7 @@ object BlobDownloadHelper {
     // ---------------------------------------------------------------------
     // Reader script
     // ---------------------------------------------------------------------
-    
+
     private fun buildReaderJs(blobUrl: String, token: String): String {
         val urlLit = JSONObject.quote(blobUrl)
         val tokLit = JSONObject.quote(token)
@@ -499,7 +506,7 @@ object BlobDownloadHelper {
                     t.javaClass.simpleName + ": " + t.message)
             }
         }
-        
+
         return try {
             val dir = p.appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
                 ?: return "no-ext-dir"
@@ -636,18 +643,16 @@ object BlobDownloadHelper {
         return s
     }
 
-    private fun uiToast(activity: Activity, msg: String) {
-        try {
-            activity.runOnUiThread {
-                Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
-            }
-        } catch (_: Throwable) {}
+    /** Post a toast from any thread using an application context. */
+    private fun toastOnUi(context: Context, msg: String) {
+        mainHandler.post {
+            try {
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            } catch (_: Throwable) {}
+        }
     }
 
-    private fun toastOnUi(activity: Activity, msg: String) {
-        uiToast(activity, msg)
-    }
-
+    /** Call on the UI thread with a still-alive Activity. */
     private fun toast(context: Context, msg: String) {
         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
     }
