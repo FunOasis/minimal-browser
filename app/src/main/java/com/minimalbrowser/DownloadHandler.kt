@@ -351,6 +351,18 @@ object DownloadHandler {
         }
         return s
     }
+        
+    internal fun uniqueFile(dir: File, fileName: String): File {
+        var f = File(dir, fileName)
+        if (!f.exists()) return f
+        val ext = fileName.substringAfterLast('.', "")
+        val stem = fileName.substringBeforeLast('.', fileName)
+        var i = 1
+        while (f.exists()) {
+            f = File(dir, "$stem (" + i++ + ")" + if (ext.isEmpty()) "" else ".$ext")
+        }
+        return f
+    }
 
     // -------------------------------------------------------------------------
     // Toast helpers
