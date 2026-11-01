@@ -207,8 +207,7 @@ object DownloadHandler {
         val input = conn.inputStream
         var output: OutputStream? = null
         var mediaUri: Uri? = null
-        var fileTarget: File? = null
-
+        var fileTarget: File? = null        
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
@@ -229,7 +228,10 @@ object DownloadHandler {
                 val dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
                     ?: throw Exception("no external files dir")
                 if (!dir.exists()) dir.mkdirs()
-                val f = File(dir, filename)
+                // Never silently truncate an existing file with the same
+                // name: MediaStore auto-uniquifies on 29+, the File API
+                // does not.
+                val f = uniqueFile(dir, filename)
                 fileTarget = f
                 output = FileOutputStream(f)
             }
@@ -255,6 +257,14 @@ object DownloadHandler {
                 }
             }
             output.flush()
+            // A clean EOF before Content-Length means the connection was
+            // cut mid-transfer. Without this check the truncated file is
+            // reported as a successful download.
+            if (totalBytes > 0L && bytesWritten != totalBytes) {
+                throw java.io.IOException(
+                    "truncated: got " + bytesWritten + " of " + totalBytes + " bytes"
+                )
+            }
             Log.i(TAG, "wrote " + bytesWritten + " bytes to " + filename)
 
             if (mediaUri != null) {
