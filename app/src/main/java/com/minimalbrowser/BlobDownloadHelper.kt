@@ -311,14 +311,14 @@ object BlobDownloadHelper {
             )
         }
     }
-
+    
     @JavascriptInterface
-    fun deliverError(message: String) {
-        val p = pending ?: return
+    fun deliverError(token: String, message: String) {
+        val p = pendings[token] ?: return
         p.failed = true
         val wasOpened = p.opened
         finalizeDownload(p, success = false)
-        synchronized(lock) { if (pending === p) pending = null }
+        pendings.remove(token, p)
         Log.w(TAG, "JS reported error: " + message)
         if (wasOpened) DownloadNotifications.complete(p.activity, p.fileName, success = false)
         val short = if (message.length > 80) message.substring(0, 80) else message
@@ -372,26 +372,28 @@ object BlobDownloadHelper {
     // ---------------------------------------------------------------------
     // Reader script
     // ---------------------------------------------------------------------
-
-    private fun buildReaderJs(blobUrl: String): String {
+    
+    private fun buildReaderJs(blobUrl: String, token: String): String {
         val urlLit = JSONObject.quote(blobUrl)
+        val tokLit = JSONObject.quote(token)
         return "(async function(){" +
             "try{" +
                 "var url=" + urlLit + ";" +
+                "var tok=" + tokLit + ";" +
                 "var store=window.__mbBlobs||{};" +
                 "var names=window.__mbNames||{};" +
                 "var b=store[url];" +
                 "if(!b){" +
-                    "window." + JS_NAME + ".deliverError('blob-not-captured keys='+Object.keys(store).length);" +
+                    "window." + JS_NAME + ".deliverError(tok,'blob-not-captured keys='+Object.keys(store).length);" +
                     "return;" +
                 "}" +
                 "var name=names[url]||'';" +
                 "var total=b.size||0;" +
-                "window." + JS_NAME + ".begin(name,total);" +
+                "window." + JS_NAME + ".begin(tok,name,total);" +
                 "var ab=await b.arrayBuffer();" +
                 "var bytes=new Uint8Array(ab);" +
                 "var n=bytes.length;" +
-                "if(n===0){window." + JS_NAME + ".deliverChunk('',true);return;}" +
+                "if(n===0){window." + JS_NAME + ".deliverChunk(tok,'',true);return;}" +
                 "var CHUNK=" + CHUNK_SIZE + ";" +
                 "var STRSZ=32768;" +
                 "for(var off=0;off<n;off+=CHUNK){" +
@@ -402,10 +404,10 @@ object BlobDownloadHelper {
                         "parts.push(String.fromCharCode.apply(null,sub.subarray(i,i+STRSZ)));" +
                     "}" +
                     "var b64=btoa(parts.join(''));" +
-                    "window." + JS_NAME + ".deliverChunk(b64,(end===n));" +
+                    "window." + JS_NAME + ".deliverChunk(tok,b64,(end===n));" +
                 "}" +
             "}catch(e){" +
-                "window." + JS_NAME + ".deliverError(String(e&&e.message||e));" +
+                "window." + JS_NAME + ".deliverError(tok,String(e&&e.message||e));" +
             "}" +
         "})();"
     }
