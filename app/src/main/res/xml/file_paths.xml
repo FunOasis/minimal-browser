@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- App-specific external Downloads dir used by the in-process
+         downloader on API 26-28 and whenever MediaStore is unavailable. -->
+    <external-files-path name="downloads" path="Download/" />
+</paths>
