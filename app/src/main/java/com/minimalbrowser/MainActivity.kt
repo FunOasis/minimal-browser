@@ -1573,9 +1573,10 @@ private fun reloadCosmeticFilter(store: CosmeticStore) {
             null, errorPageHtml(description, url), "text/html", "utf-8", null
         )
     }
-
+    
     override fun onRenderProcessGone(view: WebView) {
         Toast.makeText(this, "Renderer crashed - restarting", Toast.LENGTH_SHORT).show()
+        tabManager.handleWebViewDestroyed(view)
         recreate()
     }
 
