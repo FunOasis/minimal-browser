@@ -499,12 +499,12 @@ object BlobDownloadHelper {
                     t.javaClass.simpleName + ": " + t.message)
             }
         }
-
+        
         return try {
             val dir = p.appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
                 ?: return "no-ext-dir"
             if (!dir.exists() && !dir.mkdirs()) return "mkdir"
-            val f = File(dir, p.fileName)
+            val f = DownloadHandler.uniqueFile(dir, p.fileName)
             p.output = FileOutputStream(f)
             p.fileTarget = f
             Log.i(TAG, "destination: app dir " + f.absolutePath)
