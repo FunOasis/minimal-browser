@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.webkit.CookieManager
 import android.webkit.WebView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -82,7 +83,35 @@ class MinimalBrowserApp : Application() {
         }
     }
 
-    private companion object {
-        const val TAG = "MinimalBrowserApp"
+    companion object {
+        private const val TAG = "MinimalBrowserApp"
+
+        /**
+         * Persist the CookieManager's in-memory cookie buffer to disk.
+         *
+         * Set-Cookie responses and document.cookie writes are buffered
+         * in RAM; they only reach storage on WebView's internal periodic
+         * flush, or on the explicit flush in MainActivity.onPause(). A
+         * tab whose WebView is destroyed -- closed by the user, frozen
+         * for idleness, evicted at the 10-tab cap, torn down with the
+         * activity, or killed by a renderer crash -- can be holding the
+         * newest cookie updates for its site (fresh session tokens,
+         * remember-me flags). If the process then dies before the next
+         * onPause flush (low memory, crash, user swipe-away), those
+         * updates vanish and the user is silently logged out.
+         *
+         * TabManager calls this from every WebView-destroy path.
+         *
+         * Wrapped in try/catch because CookieManager can throw in odd
+         * process states (before the WebView provider initialises, or
+         * after its death); a lost flush is never fatal.
+         */
+        @JvmStatic
+        fun flushCookies() {
+            try {
+                CookieManager.getInstance().flush()
+            } catch (_: Throwable) {
+            }
+        }
     }
 }
