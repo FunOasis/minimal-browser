@@ -258,10 +258,21 @@ class BlockingWebViewClient(
         error: WebResourceError?
     ) {
         super.onReceivedError(view, request, error)
-        if (request?.isForMainFrame == true) {
-            val desc = error?.description?.toString() ?: "Page failed to load"
-            ui.onPageLoadError(view, desc, request.url?.toString())
-        }
+        if (request?.isForMainFrame != true) return
+        val desc = error?.description?.toString().orEmpty()
+        // ERR_ABORTED is what WebView reports when WE cancelled the load
+        // ourselves: a UrlCleaner rewrite (shouldOverrideUrlLoading
+        // returning true + posting loadUrl), a desktop-mode UA switch, or
+        // back-navigation away from a half-loaded page. It is not a real
+        // failure -- surfacing it here flashed the "Can't open this
+        // page" error screen over the very navigation we had just
+        // started, and left a spurious error page in the back history.
+        if (desc.contains("ERR_ABORTED", ignoreCase = true)) return
+        ui.onPageLoadError(
+            view,
+            desc.ifBlank { "Page failed to load" },
+            request.url?.toString()
+        )
     }
 
     override fun onReceivedSslError(
