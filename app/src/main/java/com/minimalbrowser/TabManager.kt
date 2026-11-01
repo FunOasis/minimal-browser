@@ -330,13 +330,33 @@ class TabManager(
             Log.w(TAG, "releaseFullscreenIfActive host failed: " + t.message)
         }
     }
+    
+    /**
+     * The client already destroyed this WebView (renderer crash). Drop
+     * our reference NOW so the activity teardown (recreate() ->
+     * onPause -> onDestroy) never touches a destroyed WebView again.
+     */
+    fun handleWebViewDestroyed(wv: WebView) {
+        for (tab in _tabs) {
+            if (tab.webView === wv) {
+                tab.webView = null
+                tab.client = null
+                tab.frozen = true
+                tab.hasLoadedOnce = false
+            }
+        }
+    }
 
     private fun destroyWebView(wv: WebView) {
-        runCatching { wv.loadUrl("about:blank") }
-        (wv.parent as? ViewGroup)?.removeView(wv)
-        wv.stopLoading()
-        wv.removeAllViews()
-        wv.destroy()
+        // No about:blank dance: we destroy in the same call stack, so
+        // that navigation could never complete. Everything is wrapped
+        // because after WebView.destroy() no method may be called.
+        runCatching {
+            (wv.parent as? ViewGroup)?.removeView(wv)
+            wv.stopLoading()
+            wv.removeAllViews()
+            wv.destroy()
+        }
     }
 
     private fun freezeTab(index: Int) {
