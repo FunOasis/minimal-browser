@@ -178,14 +178,32 @@ class DownloadRepository(private val appContext: Context) {
             localUri, modified, SOURCE_DM
         )
     }
-
+    
     fun fileUriFor(item: Item): Uri? {
-        if (item.isLocal) return item.localUri
-        return try { dm().getUriForDownloadedFile(item.id) }
+        val raw = if (item.isLocal) item.localUri
+        else try { dm().getUriForDownloadedFile(item.id) }
         catch (t: Throwable) {
             Log.w(TAG, "fileUriFor failed: " + t.message)
             null
         }
+        // A file:// URI inside app-specific storage can neither leave
+        // the process (FileUriExposedException on targetSdk 24+) nor be
+        // read by the receiving app. Convert to a content:// URI.
+        if (raw != null && "file".equals(raw.scheme, ignoreCase = true)) {
+            val path = raw.path
+            if (!path.isNullOrBlank()) {
+                try {
+                    return androidx.core.content.FileProvider.getUriForFile(
+                        appContext,
+                        appContext.packageName + ".fileprovider",
+                        File(path)
+                    )
+                } catch (t: Throwable) {
+                    Log.w(TAG, "FileProvider wrap failed: " + t.message)
+                }
+            }
+        }
+        return raw
     }
 
     // ----------------------------------------------------------------
