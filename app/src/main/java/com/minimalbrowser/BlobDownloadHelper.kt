@@ -163,7 +163,7 @@ object BlobDownloadHelper {
     // ---------------------------------------------------------------------
     // Entry point
     // ---------------------------------------------------------------------
-
+    
     fun start(
         activity: Activity,
         webView: WebView,
@@ -174,12 +174,18 @@ object BlobDownloadHelper {
         Log.i(TAG, "start url=" + blobUrl + " fallback=" + fileName + " mime=" + mimeType)
         if (blobUrl.isBlank()) return
 
+        // Abandon anything still in flight. Abandoned readers keep their
+        // token, so their late deliverChunk() calls hit a closed stream
+        // and fail cleanly instead of corrupting the new download.
         synchronized(lock) {
-            pending?.let { abandon(it) }
-            pending = null
+            val toDrop = pendings.values.toList()
+            pendings.clear()
+            for (p in toDrop) abandon(p)
         }
 
+        val token = java.util.UUID.randomUUID().toString()
         val p = Pending(
+            token = token,
             appContext = activity.applicationContext,
             activity = activity,
             fileName = fileName.ifBlank {
@@ -187,15 +193,15 @@ object BlobDownloadHelper {
             },
             mime = mimeType?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
         )
-        synchronized(lock) { pending = p }
+        pendings[token] = p
 
-        val js = buildReaderJs(blobUrl)
+        val js = buildReaderJs(blobUrl, token)
         try {
             webView.evaluateJavascript(js, null)
-            Log.i(TAG, "reader posted")
+            Log.i(TAG, "reader posted token=" + token)
         } catch (t: Throwable) {
             Log.w(TAG, "evaluateJavascript failed: " + t.message)
-            synchronized(lock) { if (pending === p) pending = null }
+            pendings.remove(token, p)
             toast(activity, activity.getString(R.string.download_failed) + ": js-eval")
         }
     }
@@ -212,9 +218,10 @@ object BlobDownloadHelper {
      * Runs on the WebView bridge thread. Synchronous from JS's point of
      * view: JS blocks here until we return.
      */
+        
     @JavascriptInterface
-    fun begin(suggestedName: String, totalBytes: Long) {
-        val p = pending ?: return
+    fun begin(token: String, suggestedName: String, totalBytes: Long) {
+        val p = pendings[token] ?: return
         if (p.opened || p.failed) return
 
         val clean = sanitize(suggestedName)
@@ -225,7 +232,7 @@ object BlobDownloadHelper {
         if (err != null) {
             Log.w(TAG, "openOutput failed: " + err)
             p.failed = true
-            synchronized(lock) { if (pending === p) pending = null }
+            pendings.remove(token, p)
             toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
                 ": openOutput " + err)
             return
@@ -233,11 +240,11 @@ object BlobDownloadHelper {
         p.opened = true
         Log.i(TAG, "begin name=" + p.fileName + " total=" + totalBytes)
         DownloadNotifications.start(p.activity, p.fileName, totalBytes)
-    }
-
+    }    
+        
     @JavascriptInterface
-    fun deliverChunk(b64: String, isLast: Boolean) {
-        val p = pending ?: return
+    fun deliverChunk(token: String, b64: String, isLast: Boolean) {
+        val p = pendings[token] ?: return
         if (p.failed || !p.opened) return
 
         if (b64.isNotEmpty()) {
@@ -266,7 +273,7 @@ object BlobDownloadHelper {
                     Log.w(TAG, "chunk write failed: " + writeError)
                     p.failed = true
                     finalizeDownload(p, success = false)
-                    synchronized(lock) { if (pending === p) pending = null }
+                    pendings.remove(token, p)
                     toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
                         ": write")
                     return
@@ -286,7 +293,7 @@ object BlobDownloadHelper {
                 Log.w(TAG, "chunk decode failed: " + t.message)
                 p.failed = true
                 finalizeDownload(p, success = false)
-                synchronized(lock) { if (pending === p) pending = null }
+                pendings.remove(token, p)
                 toastOnUi(p.activity, p.activity.getString(R.string.download_failed) +
                     ": decode")
                 return
@@ -296,7 +303,7 @@ object BlobDownloadHelper {
         if (isLast) {
             Log.i(TAG, "complete, bytes=" + p.bytesWritten)
             finalizeDownload(p, success = true)
-            synchronized(lock) { if (pending === p) pending = null }
+            pendings.remove(token, p)
             DownloadNotifications.complete(p.activity, p.fileName, success = true)
             toastOnUi(
                 p.activity,
