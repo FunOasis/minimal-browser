@@ -356,6 +356,11 @@ class TabManager(
                 tab.hasLoadedOnce = false
             }
         }
+        // The client already destroyed this WebView out from under us
+        // (renderer crash). Its cookie updates are still only buffered
+        // in RAM -- persist them now, in case the crash cascades into
+        // process death before the next onPause flush.
+        MinimalBrowserApp.flushCookies()
     }
 
     private fun destroyWebView(wv: WebView) {
@@ -368,6 +373,12 @@ class TabManager(
             wv.removeAllViews()
             wv.destroy()
         }
+        // Persist any cookies still sitting in the CookieManager's RAM
+        // buffer. Every path that kills a WebView funnels through here --
+        // user tab close, idle freeze, 10-tab eviction, activity teardown
+        // -- and if the process dies before the next onPause flush, the
+        // site's most recent cookie updates would be lost with it.
+        MinimalBrowserApp.flushCookies()
     }
 
     private fun freezeTab(index: Int) {
@@ -561,7 +572,7 @@ class TabManager(
                             vaultController.clearTarget()
                         }
                         v?.post { runCatching { v.destroy() } }
-                        create(url = url, makeActive = true)
+                        create(url = url, make_active = true)
                         return true
                     }
 
