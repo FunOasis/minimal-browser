@@ -146,7 +146,14 @@ class TabManager(
         return tab
     }
 
-    fun restore(urls: List<String>, activeIndex: Int) {
+    /**
+     * Rebuild the tab list from a persisted session. The optional
+     * [jsFlags] list restores the per-tab JavaScript toggle state
+     * (saved by MainActivity.onSaveInstanceState); entries beyond the
+     * list, or a null list, fall back to the inherited default, which
+     * is exactly the pre-existing behaviour.
+     */
+    fun restore(urls: List<String>, activeIndex: Int, jsFlags: List<Boolean>? = null) {
         if (_tabs.isNotEmpty()) {
             destroyAll()
         }
@@ -165,8 +172,11 @@ class TabManager(
             return
         }
 
-        for (u in cleaned) {
-            create(url = u, makeActive = false)
+        for ((i, u) in cleaned.withIndex()) {
+            val tab = create(url = u, makeActive = false)
+            val js = jsFlags?.getOrNull(i) ?: continue
+            tab.javaScriptEnabled = js
+            tab.webView?.settings?.javaScriptEnabled = js
         }
         switchTo(activeIndex.coerceIn(0, _tabs.size - 1))
     }
@@ -215,13 +225,14 @@ class TabManager(
             wv.loadUrl(cleaned)
             tab.hasLoadedOnce = true
         }
-            
+
         syncVisibility()
-    // Re-run vault detection for the now-active tab. Without this,
-    // switching to an already-loaded login page never re-triggers
-    // detection, because onPageFinished only fires once per load.    
-        wv?.let { vaultController.recheck(it) }    
-        onTabsChanged()    
+
+        // Re-run vault detection for the now-active tab. Without this,
+        // switching to an already-loaded login page never re-triggers
+        // detection, because onPageFinished only fires once per load.
+        wv?.let { vaultController.recheck(it) }
+        onTabsChanged()
         syncActiveUi()
     }
 
@@ -330,7 +341,7 @@ class TabManager(
             Log.w(TAG, "releaseFullscreenIfActive host failed: " + t.message)
         }
     }
-    
+
     /**
      * The client already destroyed this WebView (renderer crash). Drop
      * our reference NOW so the activity teardown (recreate() ->
@@ -523,7 +534,10 @@ class TabManager(
 
             val openerUrl = view?.url
             val trap = WebView(activity).apply {
-                settings.javaScriptEnabled = true
+                // Inherit the opener tab's JavaScript setting instead of
+                // hardcoding true: a user who disabled JS for the tab
+                // must not have it silently re-enabled inside a popup.
+                settings.javaScriptEnabled = tab.javaScriptEnabled
                 settings.setSupportMultipleWindows(false)
                 addJavascriptInterface(
                     VaultBridge(vaultController, this),
