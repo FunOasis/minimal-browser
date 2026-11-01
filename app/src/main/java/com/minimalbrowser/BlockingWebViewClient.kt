@@ -18,6 +18,7 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import java.io.ByteArrayInputStream
 import java.net.URI
+import java.net.URISyntaxException
 import java.util.concurrent.atomic.AtomicInteger
 
 interface BrowserUiListener {
@@ -42,6 +43,11 @@ class BlockingWebViewClient(
 
         private const val INTERNAL_SCHEME = "minimal"
         private const val HOME_URL = "minimal://home"
+
+        // The extra Intent.parseUri decodes the "S.browser_fallback_url=..."
+        // parameter into. Chrome defined the contract; sites rely on it to
+        // say "if the target app is missing, open THIS web page instead".
+        private const val EXTRA_BROWSER_FALLBACK_URL = "browser_fallback_url"
 
         private val EXTERNAL_SCHEMES = setOf(
             "mailto", "tel", "sms", "smsto", "mms", "mmsto",
@@ -154,7 +160,7 @@ class BlockingWebViewClient(
                 }
             }
             "about", INTERNAL_SCHEME -> false
-            in EXTERNAL_SCHEMES -> { dispatchExternal(uri); true }
+            in EXTERNAL_SCHEMES -> { dispatchExternal(view, uri); true }
             else -> {
                 Log.w(TAG, "Refusing navigation with scheme '" + scheme + "'")
                 true
@@ -186,19 +192,172 @@ class BlockingWebViewClient(
         return ext in DOWNLOAD_EXTENSIONS
     }
 
-    private fun dispatchExternal(uri: Uri) {
+    // -----------------------------------------------------------------
+    // External scheme dispatch (mailto:, tel:, market:, intent:, ...)
+    // -----------------------------------------------------------------
+
+    private fun dispatchExternal(view: WebView?, uri: Uri) {
+        if (uri.scheme.equals("intent", ignoreCase = true)) {
+            dispatchIntentUri(view, uri)
+        } else {
+            dispatchPlainExternal(uri)
+        }
+    }
+
+    /**
+     * Fire a plain external URI (mailto:, tel:, geo:, market:, ...) at
+     * the system. There is no meaningful fallback for these, so a
+     * missing handler just earns a toast.
+     */
+    private fun dispatchPlainExternal(uri: Uri) {
         try {
             val intent = Intent(Intent.ACTION_VIEW, uri)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             appContext.startActivity(intent)
         } catch (e: ActivityNotFoundException) {
             Log.w(TAG, "No app handles " + uri.scheme + ": " + uri)
-            Toast.makeText(
-                appContext,
-                "No app found to open " + uri.scheme + " links",
-                Toast.LENGTH_SHORT
-            ).show()
+            toastNoHandler(uri.scheme)
         }
+    }
+
+    /**
+     * Chrome-compatible handling for intent:// links.
+     *
+     * A real link looks like
+     *
+     *   intent://scan/#Intent;scheme=zxing;package=...;
+     *     S.browser_fallback_url=https%3A%2F%2Fexample.com%2F;end
+     *
+     * The part after "#Intent;" is a serialized Intent object, so the
+     * URI must be decoded with Intent.parseUri(). The previous code
+     * handed the raw URI to a generic ACTION_VIEW intent, which can
+     * never resolve to anything -- every intent: link died with "No
+     * app found to open intent links".
+     *
+     * Implemented policy:
+     *   1. Decode the URI with URI_INTENT_SCHEME.
+     *   2. Read browser_fallback_url out of the decoded extras.
+     *   3. Sanitise before launch (see sanitizeIntentForWeb).
+     *   4. An embedded plain web URL with no package= is just a web
+     *      navigation in disguise -- load it in this tab instead of
+     *      launching a second browser task (possibly this browser).
+     *   5. Launch. If nothing can handle it, open the fallback URL,
+     *      but only when it is http/https (never file:, content:,
+     *      javascript: or nested intent: URIs).
+     *   6. No handler and no usable fallback: toast, stay put.
+     */
+    private fun dispatchIntentUri(view: WebView?, uri: Uri) {
+        val parsed = try {
+            Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME)
+        } catch (e: URISyntaxException) {
+            Log.w(TAG, "Malformed intent URI (" + e.message + "): " + uri)
+            toastNoHandler(uri.scheme)
+            return
+        }
+
+        // Chrome contract: the fallback web URL rides in the extras as
+        // a string. Read it before anything else touches the intent.
+        val fallbackUrl = parsed.getStringExtra(EXTRA_BROWSER_FALLBACK_URL)
+
+        val launch = sanitizeIntentForWeb(parsed)
+
+        // "intent://example.com/#Intent;scheme=https;end" with no
+        // package= is a web navigation in disguise. Browsers own
+        // those: keep it in this tab rather than launching a second
+        // browser task (possibly this very browser again).
+        val innerWebUrl = launch.data?.toString()
+        if (launch.`package` == null &&
+            innerWebUrl != null &&
+            isWebUrl(innerWebUrl) &&
+            view != null
+        ) {
+            loadFallbackUrl(view, innerWebUrl)
+            return
+        }
+
+        try {
+            appContext.startActivity(launch)
+        } catch (e: ActivityNotFoundException) {
+            if (view != null && fallbackUrl != null && isWebUrl(fallbackUrl)) {
+                Log.w(TAG, "No app for intent URI, using fallback: " + uri)
+                loadFallbackUrl(view, fallbackUrl)
+            } else {
+                Log.w(TAG, "No app handles intent: " + uri)
+                toastNoHandler(uri.scheme)
+            }
+        } catch (e: SecurityException) {
+            // Should be unreachable after sanitising; guarded anyway
+            // because a crash inside shouldOverrideUrlLoading would
+            // take the whole browser down with it.
+            Log.w(TAG, "Refused to launch intent: " + uri + " (" + e.message + ")")
+            toastNoHandler(uri.scheme)
+        }
+    }
+
+    /**
+     * Strip everything a hostile page could abuse out of an Intent
+     * decoded from a URI. This mirrors the hardening Chrome applies:
+     *
+     *   - CATEGORY_BROWSABLE is forced on, so only activities that
+     *     explicitly volunteer for browser-initiated launches match.
+     *   - The component (and any selector's component) is cleared: a
+     *     web page must never be able to aim an intent at a specific
+     *     -- possibly non-exported -- activity of another app. That is
+     *     the classic intent-redirection attack.
+     *   - sourceBounds and clipData are dropped, and every flag the
+     *     URI carried (launchFlags=...) is discarded. The only flag we
+     *     re-add is NEW_TASK, which launching from an application
+     *     context requires.
+     */
+    private fun sanitizeIntentForWeb(intent: Intent): Intent {
+        intent.addCategory(Intent.CATEGORY_BROWSABLE)
+        intent.component = null
+        intent.selector?.let { selector ->
+            selector.addCategory(Intent.CATEGORY_BROWSABLE)
+            selector.component = null
+        }
+        intent.sourceBounds = null
+        intent.clipData = null
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        return intent
+    }
+
+    private fun isWebUrl(url: String): Boolean =
+        url.startsWith("http://", ignoreCase = true) ||
+            url.startsWith("https://", ignoreCase = true)
+
+    /**
+     * Load a fallback web URL in the tab that triggered the intent,
+     * with the same treatment an address-bar navigation gets: the
+     * per-host desktop UA is applied first and tracking parameters
+     * are stripped. Posted because we are inside
+     * shouldOverrideUrlLoading, which must return before the load it
+     * schedules may start (same pattern as the UrlCleaner rewrite
+     * in the http/https branch).
+     */
+    private fun loadFallbackUrl(view: WebView, fallbackUrl: String) {
+        val host = try {
+            URI(fallbackUrl).host?.lowercase()?.removePrefix("www.")
+        } catch (_: Exception) {
+            null
+        }
+        if (host != null) {
+            WebViewConfigurator.applyUserAgent(
+                appContext, view, prefs.isDesktopHost(host)
+            )
+        }
+        val cleaned = UrlCleaner.clean(fallbackUrl, prefs.removeParams)
+        view.post {
+            try { view.loadUrl(cleaned) } catch (_: Throwable) {}
+        }
+    }
+
+    private fun toastNoHandler(scheme: String?) {
+        Toast.makeText(
+            appContext,
+            "No app found to open " + (scheme ?: "this") + " links",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun serveHomePage(): WebResourceResponse {
