@@ -43,8 +43,9 @@ object DownloadNotifications {
             .build()
         post(context, idFor(fileName), n)
     }
-
+    
     fun complete(context: Context, fileName: String, success: Boolean) {
+        ensureChannel(context) // failures can happen before any start()
         val title = if (success) {
             context.getString(R.string.download_saved, fileName)
         } else {
