@@ -572,7 +572,7 @@ class TabManager(
                             vaultController.clearTarget()
                         }
                         v?.post { runCatching { v.destroy() } }
-                        create(url = url, make_active = true)
+                        create(url = url, makeActive = true)
                         return true
                     }
 
