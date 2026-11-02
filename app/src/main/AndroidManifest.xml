@@ -28,8 +28,8 @@
         <!-- configChanges now covers split-screen (screenLayout,
              smallestScreenSize), fold/unfold and display-density changes
              (density) and dark-mode toggles (uiMode). Without these the
-             activity was recreated -- every WebView destroyed and every
-             tab reloaded from its URL -- for config changes that a
+             activity was recreated (every WebView destroyed and every
+             tab reloaded from its URL) for config changes that a
              browser can absorb without a rebuild. Locale is deliberately
              NOT handled so language switches still recreate cleanly. -->
         <activity
