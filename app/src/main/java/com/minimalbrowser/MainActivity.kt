@@ -244,7 +244,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         // Stored as a boolean[] because Bundle has no Boolean-ArrayList
         // variant; toList() gives back the List<Boolean> that
         // TabManager.restore() expects.
-        val savedJs = savedInstanceState?.getBooleanArray(KEY_TAB_JS)?.
+        val savedJs = savedInstanceState?.getBooleanArray(KEY_TAB_JS)?.toList()
 
         // Two ways an external URL reaches us:
         //   1. ACTION_VIEW from another app's link tap -> intent.data
@@ -334,9 +334,9 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         outState.putInt(KEY_ACTIVE_TAB, tabManager.getActiveIndex())
         // Persist the per-tab JS toggle alongside the URLs so the
         // recreated activity restores the exact same state.
-        outState.putBooleanArrayList(
+        outState.putBooleanArray(
             KEY_TAB_JS,
-            ArrayList(tabs.map { it.javaScriptEnabled })
+            tabs.map { it.javaScriptEnabled }.toBooleanArray()
         )
     }
 
