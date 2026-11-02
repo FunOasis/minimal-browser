@@ -236,12 +236,15 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
                 showExitConfirm()
             }
         })
-
+        
         val savedUrls = savedInstanceState?.getStringArrayList(KEY_TAB_URLS)
         val savedActive = savedInstanceState?.getInt(KEY_ACTIVE_TAB, 0) ?: 0
         // Per-tab JavaScript toggle state, so a config-change recreation
         // does not silently reset "JS off" back to the global default.
-        val savedJs = savedInstanceState?.getBooleanArrayList(KEY_TAB_JS)
+        // Stored as a boolean[] because Bundle has no Boolean-ArrayList
+        // variant; toList() gives back the List<Boolean> that
+        // TabManager.restore() expects.
+        val savedJs = savedInstanceState?.getBooleanArray(KEY_TAB_JS)?.
 
         // Two ways an external URL reaches us:
         //   1. ACTION_VIEW from another app's link tap -> intent.data
