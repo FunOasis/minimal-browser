@@ -471,6 +471,7 @@ class TabManager(
         val client = BlockingWebViewClient(
             blocker = blocker,
             appContext = activity.applicationContext,
+            hostActivity = activity,
             ui = ui
         )
         tab.client = client
