@@ -1,13 +1,16 @@
 package com.minimalbrowser
 
+import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.net.http.SslError
+import android.text.InputType
 import android.util.Log
 import android.view.ViewGroup
+import android.webkit.HttpAuthHandler
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.SslErrorHandler
 import android.webkit.WebResourceError
@@ -15,8 +18,12 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebViewDatabase
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.Toast
 import java.io.ByteArrayInputStream
+import java.lang.ref.WeakReference
 import java.net.URI
 import java.net.URISyntaxException
 import java.util.concurrent.atomic.AtomicInteger
@@ -34,8 +41,18 @@ interface BrowserUiListener {
 class BlockingWebViewClient(
     private val blocker: AdBlocker,
     private val appContext: Context,
-    private val ui: BrowserUiListener
+    private val ui: BrowserUiListener,
+    hostActivity: MainActivity
 ) : WebViewClient() {
+
+    // Held weak: this client is attached to a WebView whose lifetime can
+    // outlast a single Activity instance in edge cases (locale changes
+    // still recreate the Activity per MainActivity's configChanges
+    // comment). Only used to host two confirmation dialogs below; never
+    // dereferenced off the UI thread.
+    private val activityRef = WeakReference(hostActivity)
+    private fun currentActivity(): MainActivity? =
+        activityRef.get()?.takeIf { !it.isFinishing && !it.isDestroyed }
 
     companion object {
         private const val TAG = "BlockingWebViewClient"
@@ -439,8 +456,169 @@ class BlockingWebViewClient(
         handler: SslErrorHandler,
         error: SslError?
     ) {
+        val host = error?.url?.let { urlToHost(it) }
+        if (error != null && host != null && LocalNetwork.isLocalOrPrivateHost(host)) {
+            // Router and ISP-modem admin pages on the local network very
+            // commonly serve HTTPS with a self-signed certificate. Ask
+            // the user instead of silently failing shut -- but only for
+            // a host on a private/loopback/link-local address or a
+            // ".local" name, never for a public-internet host, so this
+            // never weakens certificate checking for ordinary browsing.
+            Log.w(TAG, "SSL error on local host " + host + ": " + error.primaryError)
+            showSslBypassDialog(handler, host, error)
+            return
+        }
         Log.w(TAG, "SSL error, refusing to proceed: " + error?.primaryError)
         handler.cancel()
+    }
+
+    private fun urlToHost(url: String): String? =
+        try { URI(url).host } catch (_: Exception) { null }
+
+    private fun sslErrorDescription(code: Int): String = when (code) {
+        SslError.SSL_NOTYETVALID -> "certificate not yet valid"
+        SslError.SSL_EXPIRED -> "certificate expired"
+        SslError.SSL_IDMISMATCH -> "certificate doesn't match this address"
+        SslError.SSL_UNTRUSTED -> "untrusted or self-signed certificate"
+        SslError.SSL_DATE_INVALID -> "device clock looks wrong"
+        SslError.SSL_INVALID -> "invalid certificate"
+        else -> "certificate could not be verified"
+    }
+
+    private fun showSslBypassDialog(handler: SslErrorHandler, host: String, error: SslError) {
+        val activity = currentActivity()
+        if (activity == null) {
+            handler.cancel()
+            return
+        }
+        try {
+            AlertDialog.Builder(activity)
+                .setTitle("Can't verify " + host)
+                .setMessage(
+                    host + " is on your local network, and its security " +
+                        "certificate could not be verified (" +
+                        sslErrorDescription(error.primaryError) + "). This is " +
+                        "normal for routers and modems, which usually sign " +
+                        "their own certificate. Continue only if this is your " +
+                        "own device."
+                )
+                .setPositiveButton("Continue") { _, _ -> handler.proceed() }
+                .setNegativeButton("Cancel") { _, _ -> handler.cancel() }
+                .setOnCancelListener { handler.cancel() }
+                .setCancelable(true)
+                .show()
+        } catch (t: Throwable) {
+            Log.w(TAG, "Could not show SSL dialog: " + t.message)
+            handler.cancel()
+        }
+    }
+
+    /**
+     * Router, ISP-modem and other local-network admin pages overwhelmingly
+     * gate their web UI with plain HTTP Basic/Digest auth rather than an
+     * HTML login form (there is no WebViewClient hook for a form -- the
+     * page itself handles that -- this is specifically the browser-level
+     * auth challenge). The stock WebViewClient.onReceivedHttpAuthRequest
+     * always cancels, which made every such page unreachable through this
+     * browser. This mirrors what every mainstream browser does: check for
+     * credentials saved from a previous visit to this host+realm and
+     * retry them silently; otherwise prompt.
+     */
+    override fun onReceivedHttpAuthRequest(
+        view: WebView?,
+        handler: HttpAuthHandler,
+        host: String?,
+        realm: String?
+    ) {
+        if (view == null || host.isNullOrBlank()) {
+            handler.cancel()
+            return
+        }
+        val savedRealm = realm.orEmpty()
+
+        val stored = try {
+            @Suppress("DEPRECATION")
+            WebViewDatabase.getInstance(appContext)
+                .getHttpAuthUsernamePassword(host, savedRealm)
+        } catch (t: Throwable) {
+            Log.w(TAG, "HTTP auth credential lookup failed: " + t.message)
+            null
+        }
+        val storedUser = stored?.getOrNull(0)
+        if (!storedUser.isNullOrEmpty()) {
+            handler.proceed(storedUser, stored.getOrNull(1).orEmpty())
+            return
+        }
+
+        showHttpAuthDialog(handler, host, savedRealm)
+    }
+
+    private fun showHttpAuthDialog(handler: HttpAuthHandler, host: String, realm: String) {
+        val activity = currentActivity()
+        if (activity == null) {
+            handler.cancel()
+            return
+        }
+
+        val density = activity.resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+
+        val userField = EditText(activity).apply {
+            hint = "Username"
+            inputType = InputType.TYPE_CLASS_TEXT
+            isSingleLine = true
+        }
+        val passField = EditText(activity).apply {
+            hint = "Password"
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_PASSWORD
+            isSingleLine = true
+        }
+        val layout = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            val padH = dp(20)
+            setPadding(padH, dp(12), padH, 0)
+            addView(userField)
+            addView(
+                passField,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(8) }
+            )
+        }
+
+        val message = if (realm.isNotBlank()) {
+            "Sign in to " + host + " (" + realm + ")"
+        } else {
+            "Sign in to " + host
+        }
+
+        try {
+            AlertDialog.Builder(activity)
+                .setTitle("Login required")
+                .setMessage(message)
+                .setView(layout)
+                .setPositiveButton("Sign in") { _, _ ->
+                    val user = userField.text?.toString().orEmpty()
+                    val pass = passField.text?.toString().orEmpty()
+                    try {
+                        @Suppress("DEPRECATION")
+                        WebViewDatabase.getInstance(appContext)
+                            .setHttpAuthUsernamePassword(host, realm, user, pass)
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "Could not save HTTP auth credentials: " + t.message)
+                    }
+                    handler.proceed(user, pass)
+                }
+                .setNegativeButton("Cancel") { _, _ -> handler.cancel() }
+                .setOnCancelListener { handler.cancel() }
+                .setCancelable(true)
+                .show()
+        } catch (t: Throwable) {
+            Log.w(TAG, "Could not show HTTP auth dialog: " + t.message)
+            handler.cancel()
+        }
     }
 
     override fun onRenderProcessGone(
