@@ -476,29 +476,102 @@ private fun blockedResponseFor(url: String): WebResourceResponse {
         if (url != null) ui.onUrlChanged(view, url)
         ui.onNavStateChanged(view, view.canGoBack(), view.canGoForward())
     }
+override fun onReceivedError(
+    view: WebView?,
+    request: WebResourceRequest?,
+    error: WebResourceError?
+) {
+    super.onReceivedError(view, request, error)
+    if (view == null || request == null) return
 
-    override fun onReceivedError(
-        view: WebView?,
-        request: WebResourceRequest?,
-        error: WebResourceError?
-    ) {
-        super.onReceivedError(view, request, error)
-        if (request?.isForMainFrame != true) return
-        val desc = error?.description?.toString().orEmpty()
-        // ERR_ABORTED is what WebView reports when WE cancelled the load
-        // ourselves: a UrlCleaner rewrite (shouldOverrideUrlLoading
-        // returning true + posting loadUrl), a desktop-mode UA switch, or
-        // back-navigation away from a half-loaded page. It is not a real
-        // failure -- surfacing it here flashed the "Can't open this
-        // page" error screen over the very navigation we had just
-        // started, and left a spurious error page in the back history.
-        if (desc.contains("ERR_ABORTED", ignoreCase = true)) return
-        ui.onPageLoadError(
-            view,
-            desc.ifBlank { "Page failed to load" },
-            request.url?.toString()
-        )
+    // Sub-resource failure -- almost always a DNS block (0.0.0.0 /
+    // NXDOMAIN) or a connection refused by a firewall. onReceivedError
+    // is NOT called for HTTP 404 (that's onReceivedHttpError), so this
+    // path only fires for genuine network failures and is safe to
+    // treat as "this element is dead, collapse it."
+    if (!request.isForMainFrame) {
+        val failedUrl = request.url?.toString()
+        if (!failedUrl.isNullOrBlank()) {
+            view.post { collapseFailedResource(view, failedUrl) }
+        }
+        return
     }
+
+    val desc = error?.description?.toString().orEmpty()
+    // ERR_ABORTED is what WebView reports when WE cancelled the load
+    // ourselves: a UrlCleaner rewrite (shouldOverrideUrlLoading
+    // returning true + posting loadUrl), a desktop-mode UA switch, or
+    // back-navigation away from a half-loaded page. It is not a real
+    // failure -- surfacing it here flashed the "Can't open this
+    // page" error screen over the very navigation we had just
+    // started, and left a spurious error page in the back history.
+    if (desc.contains("ERR_ABORTED", ignoreCase = true)) return
+    ui.onPageLoadError(
+        view,
+        desc.ifBlank { "Page failed to load" },
+        request.url?.toString()
+    )
+}
+
+/**
+ * A sub-resource failed to load (DNS block, connection refused, TLS
+ * failure -- never HTTP 404). WebView will have left either a broken
+ * icon (image) or its own "web page not available" placeholder
+ * (iframe) in the page, and the ad container keeps reserving its
+ * original height. Inject a small JS pass that:
+ *
+ *   1. Finds every element whose src/href/currentSrc matches the
+ *      failed URL.
+ *   2. Collapses that element hard (display:none + zeroed box model
+ *      + absolute positioning) so it contributes no layout space.
+ *   3. If it was the sole child of its parent (and grandparent),
+ *      collapses those too -- which is what removes the gap left by
+ *      a fixed-height ad wrapper whose inner iframe is what died.
+ */
+private fun collapseFailedResource(view: WebView, failedUrl: String) {
+    val quoted = JSONObject.quote(failedUrl) // safe, escaped JS string
+    val js = "(function(){" +
+        "var u=$quoted;" +
+        "function hard(el){" +
+        "  var s=el.style;" +
+        "  s.setProperty('display','none','important');" +
+        "  s.setProperty('visibility','hidden','important');" +
+        "  s.setProperty('height','0','important');" +
+        "  s.setProperty('min-height','0','important');" +
+        "  s.setProperty('max-height','0','important');" +
+        "  s.setProperty('width','0','important');" +
+        "  s.setProperty('margin','0','important');" +
+        "  s.setProperty('padding','0','important');" +
+        "  s.setProperty('border','0','important');" +
+        "  s.setProperty('overflow','hidden','important');" +
+        "  s.setProperty('position','absolute','important');" +
+        "  s.setProperty('pointer-events','none','important');" +
+        "}" +
+        "var els=document.querySelectorAll('iframe,img,embed,object,video,audio');" +
+        "for(var i=0;i<els.length;i++){" +
+        "  var el=els[i];" +
+        "  var src=el.getAttribute('src')||'';" +
+        "  var cur=el.currentSrc||'';" +
+        "  var poster=el.getAttribute('poster')||'';" +
+        "  if(src===u||cur===u||poster===u){" +
+        "    hard(el);" +
+        "    var p=el.parentElement;" +
+        "    if(p&&p.children.length===1&&p.tagName!=='BODY'&&p.tagName!=='HTML'){" +
+        "      hard(p);" +
+        "      var gp=p.parentElement;" +
+        "      if(gp&&gp.children.length===1&&gp.tagName!=='BODY'&&gp.tagName!=='HTML'){" +
+        "        hard(gp);" +
+        "      }" +
+        "    }" +
+        "  }" +
+        "}" +
+        "})();"
+    try {
+        view.evaluateJavascript(js, null)
+    } catch (t: Throwable) {
+        Log.w(TAG, "collapseFailedResource: " + t.message)
+    }
+}
 
     override fun onReceivedSslError(
         view: WebView?,
