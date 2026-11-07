@@ -125,17 +125,30 @@ object CosmeticFilter {
         url
     }
 
-    private fun buildCss(selectors: List<String>): String {
-        val sb = StringBuilder(64 * 1024)
-        var first = true
-        for (s in selectors) {
-            if (!first) sb.append(',')
-            sb.append(s)
-            first = false
-            if (sb.length >= MAX_CSS_BYTES) break
-        }
+    private fun buildCss(selectors: List<String>): String {    
+        val sb = StringBuilder(64 * 1024)    
+        var first = true    
+        for (s in selectors) {        
+            if (!first) sb.append(',')        
+            sb.append(s)        
+            first = false        
+            if (sb.length >= MAX_CSS_BYTES) break    
+        }    
         if (first) return ""
-        sb.append("{display:none !important;visibility:hidden !important;}")
+    // Collapse the element completely: hide it, remove it from the layout flow,
+    // zero out every box‑model dimension, and stop it from capturing events.    
+        sb.append(        
+            "{display:none !important;" +        
+                "visibility:hidden !important;" +        
+                "height:0 !important;" +        
+                "width:0 !important;" +        
+                "margin:0 !important;" +        
+                "padding:0 !important;" +        
+                "border:0 !important;" +        
+                "overflow:hidden !important;" +        
+                "position:absolute !important;" +        
+                "pointer-events:none !important;}"    
+        )    
         return sb.toString()
     }
 }
