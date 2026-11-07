@@ -126,18 +126,27 @@ class BlockingWebViewClient(
         get() = blockedCounter.get()
 
     private val prefs: Prefs by lazy { Prefs.get(appContext) }
-    override fun shouldInterceptRequest(
-    view: WebView,
-    request: WebResourceRequest
-): WebResourceResponse? {
-    val url = request.url.toString()
-    if (request.isForMainFrame) return null
-    if (blocker.isBlocked(url)) {
-        blockedCounter.incrementAndGet()
-        return blockedResponseFor(url)
+    override fun shouldInterceptRequest(    
+        view: WebView,    
+        request: WebResourceRequest
+    ): WebResourceResponse? {    
+        val url = request.url.toString()
+    // Home page must be served from the packaged asset. Must come
+    // BEFORE the "return null for main frame" shortcut, otherwise
+    // WebView tries to load minimal://home over the network and the
+    // page comes up blank.    
+        if (request.isForMainFrame && url.startsWith(HOME_URL)) {        
+            return serveHomePage()    
+        }
+    
+        if (request.isForMainFrame) return null
+    
+        if (blocker.isBlocked(url)) {        
+            blockedCounter.incrementAndGet()        
+            return blockedResponseFor(url)    
+        }    
+        return null
     }
-    return null
-}
 
 /**
  * 1×1 transparent PNG, decoded once from Base64.
