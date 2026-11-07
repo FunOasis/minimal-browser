@@ -155,18 +155,17 @@ class BlockingWebViewClient(
         get() = blockedCounter.get()
 
     private val prefs: Prefs by lazy { Prefs.get(appContext) }
-
-    override fun shouldInterceptRequest(
-        view: WebView,
+    override fun shouldInterceptRequest(    
+        view: WebView,    
         request: WebResourceRequest
-    ): WebResourceResponse? {
-        val url = request.url.toString()
-        if (request.isForMainFrame && url.startsWith(HOME_URL)) return serveHomePage()
-        if (request.isForMainFrame) return null
-        if (blocker.isBlocked(url)) {
-            blockedCounter.incrementAndGet()
-            return blockedResponse()
-        }
+    ): WebResourceResponse? {    
+        val url = request.url.toString()    
+        if (request.isForMainFrame && url.startsWith(HOME_URL)) return serveHomePage()    
+        if (request.isForMainFrame) return null    
+        if (blocker.isBlocked(url)) {        
+            blockedCounter.incrementAndGet()        
+            return blockedResponseFor(url)    
+        }    
         return null
     }
 
