@@ -28,6 +28,7 @@ import java.lang.ref.WeakReference
 import java.net.URI
 import java.net.URISyntaxException
 import java.util.concurrent.atomic.AtomicInteger
+import org.json.JSONObject
 
 interface BrowserUiListener {
     fun onUrlChanged(view: WebView, url: String)
