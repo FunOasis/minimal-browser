@@ -137,17 +137,19 @@ object CosmeticFilter {
         if (first) return ""
     // Collapse the element completely: hide it, remove it from the layout flow,
     // zero out every box‑model dimension, and stop it from capturing events.    
-        sb.append(        
+        sb.append(    
             "{display:none !important;" +        
                 "visibility:hidden !important;" +        
                 "height:0 !important;" +        
+                "min-height:0 !important;" +        
+                "max-height:0 !important;" +        
                 "width:0 !important;" +        
                 "margin:0 !important;" +        
                 "padding:0 !important;" +        
                 "border:0 !important;" +        
                 "overflow:hidden !important;" +        
                 "position:absolute !important;" +        
-                "pointer-events:none !important;}"    
+                "pointer-events:none !important;}"
         )    
         return sb.toString()
     }
