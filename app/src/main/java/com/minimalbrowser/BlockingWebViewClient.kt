@@ -89,32 +89,6 @@ class BlockingWebViewClient(
             "torrent", "iso", "img", "epub", "mobi", "azw3"
         )
 
-        private fun blockedResponseFor(url: String): WebResourceResponse {    
-            val path = url.substringBefore('?').substringAfterLast('.', "").lowercase()    
-            val isImage = path in setOf("png","jpg","jpeg","gif","webp","svg","bmp","ico")    
-            val (mime, bytes) = if (isImage) {        
-                "image/png" to byteArrayOf(            
-                    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,            
-                    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,            
-                    0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,            
-                    0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,            
-                    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,            
-                    0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82        
-                )    
-            } else {        
-                "text/html" to "<!DOCTYPE html><html><head></head><body></body></html>"            
-                .toByteArray(Charsets.UTF_8)    
-            }    
-            return WebResourceResponse(        
-                mime,        
-                "utf-8",        
-                200,        
-                "OK",        
-                emptyMap(),        
-                ByteArrayInputStream(bytes)    
-            )
-        }
-
         // -----------------------------------------------------------------
         // Home page asset cache
         //
@@ -151,19 +125,63 @@ class BlockingWebViewClient(
         get() = blockedCounter.get()
 
     private val prefs: Prefs by lazy { Prefs.get(appContext) }
-    override fun shouldInterceptRequest(    
-        view: WebView,    
-        request: WebResourceRequest
-    ): WebResourceResponse? {    
-        val url = request.url.toString()    
-        if (request.isForMainFrame && url.startsWith(HOME_URL)) return serveHomePage()    
-        if (request.isForMainFrame) return null    
-        if (blocker.isBlocked(url)) {        
-            blockedCounter.incrementAndGet()        
-            return blockedResponseFor(url)    
-        }    
-        return null
+    override fun shouldInterceptRequest(
+    view: WebView,
+    request: WebResourceRequest
+): WebResourceResponse? {
+    val url = request.url.toString()
+    if (request.isForMainFrame) return null
+    if (blocker.isBlocked(url)) {
+        blockedCounter.incrementAndGet()
+        return blockedResponseFor(url)
     }
+    return null
+}
+
+/**
+ * 1×1 transparent PNG, decoded once from Base64.
+ * Using Base64 avoids the Byte-literal problem entirely and is guaranteed to be
+ * a valid PNG the WebView can render.
+ */
+private val transparentPng: ByteArray by lazy {
+    Base64.decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+        Base64.DEFAULT
+    )
+}
+
+/**
+ * For a blocked sub-resource, return 200 OK with a valid but empty body.
+ * - images  → 1×1 transparent PNG
+ * - others  → empty HTML document
+ *
+ * This prevents the WebView from rendering its built-in
+ * "Web page not available" error page inside iframes.
+ */
+private fun blockedResponseFor(url: String): WebResourceResponse {
+    val ext = url.substringBefore('?').substringAfterLast('.', "").lowercase()
+    val isImage = ext in setOf("png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico")
+
+    val mime: String
+    val body: ByteArray
+    if (isImage) {
+        mime = "image/png"
+        body = transparentPng
+    } else {
+        mime = "text/html"
+        body = "<!DOCTYPE html><html><head></head><body></body></html>"
+            .toByteArray(Charsets.UTF_8)
+    }
+
+    return WebResourceResponse(
+        mime,
+        "utf-8",
+        200,
+        "OK",
+        emptyMap(),
+        ByteArrayInputStream(body)
+    )
+}
 
     override fun shouldOverrideUrlLoading(
         view: WebView?,
