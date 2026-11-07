@@ -9,6 +9,7 @@ import android.net.Uri
 import android.net.http.SslError
 import android.text.InputType
 import android.util.Log
+import android.util.Base64
 import android.view.ViewGroup
 import android.webkit.HttpAuthHandler
 import android.webkit.RenderProcessGoneDetail
