@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Minimal Browser is a general-purpose web browser: its core job is to
+  let the user open ANY http(s) URL they type or tap, including plain
+  http:// sites that still exist across the web. That is why cleartext
+  stays permitted here rather than being locked down the way a typical
+  single-purpose app's manifest would be -- a browser that silently
+  refused to load http:// pages would not be a browser, and this
+  network security config governs the WebView's own navigation
+  cleartext policy just as much as it governs DownloadHandler's and
+  BlocklistRefreshWorker's own HTTP(S) requests.
+
+  What IS already restricted, independently of this file:
+    - Mixed content inside an https:// page is never allowed
+      (WebSettings.MIXED_CONTENT_NEVER_ALLOW in WebViewConfigurator), so
+      an https page can never quietly pull an http sub-resource.
+    - TLS certificate errors are refused by default
+      (WebViewClient.onReceivedSslError -> handler.cancel()), with one
+      narrow, logged exception for private/local-network hosts (see
+      BlockingWebViewClient.onReceivedSslError / LocalNetwork).
+
+  This file replaces the bare android:usesCleartextTraffic="true"
+  manifest flag with the same effective policy expressed as an
+  explicit, auditable configuration, so the decision has an obvious
+  place to live (and a place to narrow later -- e.g. a
+  <domain-config cleartextTrafficPermitted="false"> block for a
+  specific first-party endpoint, should one ever be added -- instead of
+  fighting a single global flag).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
