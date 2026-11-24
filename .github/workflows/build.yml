@@ -100,10 +100,8 @@ jobs:
             "platforms;android-34" \
             "build-tools;34.0.0"
 
-      - name: Set up Gradle 9.6
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.6'
 
       - name: Decode keystore (if present)
         id: keystore
@@ -127,11 +125,11 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: gradle assembleRelease --stacktrace --no-daemon
+        run: ./gradlew assembleRelease --stacktrace --no-daemon
 
       - name: Build debug APK (no keystore)
         if: steps.keystore.outputs.present != 'true'
-        run: gradle assembleDebug --stacktrace --no-daemon
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
 
       - name: Rename APKs
         run: |
