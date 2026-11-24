@@ -1,4 +1,10 @@
+// AGP and Kotlin bumped alongside app/build.gradle's compileSdk/targetSdk
+// 36 move -- AGP 9.2.x is the release line that confirms support up to API
+// 37 and is the line Google's own tooling defaults to for compileSdk 36 as
+// of late 2026. This requires Gradle >= 9.4.1 (see the CI workflow) and is
+// a major-version jump from 8.2.2 that could not be build-verified in the
+// environment this patch was produced in. See CHANGES.md before merging.
 plugins {
-    id 'com.android.application' version '8.2.2' apply false
-    id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+    id 'com.android.application' version '9.2.1' apply false
+    id 'org.jetbrains.kotlin.android' version '2.3.10' apply false
 }
