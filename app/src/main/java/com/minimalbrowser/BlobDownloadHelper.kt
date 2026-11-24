@@ -9,7 +9,6 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
-import android.util.Base64
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -18,9 +17,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
+import java.util.Base64
 
 /**
  * Saves blob: and data: URL downloads by reading their bytes in-page
@@ -50,6 +51,27 @@ import java.io.OutputStream
  *   deliverChunk() -- one call per 1 MB window; writes bytes.
  *   finalizeDownload() on isLast=true.
  *
+ * Concurrency:
+ *   Every download owns a unique token and its own Pending record in a
+ *   token-keyed map, so unrelated downloads never interfere with each
+ *   other. An earlier version additionally cleared EVERY other pending
+ *   download each time start() ran, which meant starting a second blob
+ *   download silently cancelled the first -- concurrent or rapidly
+ *   triggered downloads were simply not possible. That blanket-clear is
+ *   gone; a soft cap (MAX_CONCURRENT_DOWNLOADS) and a per-download
+ *   watchdog timeout (PENDING_TIMEOUT_MS) take its place, so a page
+ *   that never calls back (navigated away, revoked blob, crashed
+ *   renderer) cannot leak an open output stream forever, and a
+ *   pathological page cannot open unbounded concurrent downloads.
+ *
+ * Truncation:
+ *   The Blob's reported size (begin()'s totalBytes, from JS `b.size`)
+ *   is authoritative -- unlike an HTTP Content-Length it is never
+ *   "unknown". deliverChunk() now checks, on the final chunk, that the
+ *   bytes actually written match that size; a short transfer (a
+ *   JS-bridge hiccup, a renderer interruption mid-stream) is reported
+ *   as a failure instead of a silently truncated "successful" file.
+ *
  * Threading / lifecycle:
  *   Bridge callbacks arrive on the WebView's JavaBridge thread and can
  *   outlive the Activity (chunked transfer of a large canvas export
@@ -60,8 +82,9 @@ import java.io.OutputStream
  *
  * Diagnostic toasts carry a suffix identifying the failing stage:
  *     ": openOutput ...", ": js-eval", ": blob-not-captured ...",
- *     ": write", ": decode", ": <msg from page>", ": data-parse",
- *     ": data-write". A bare "Download failed" means an older build.
+ *     ": write", ": decode", ": truncated", ": too-many-active",
+ *     ": <msg from page>", ": data-parse", ": data-write". A bare
+ *     "Download failed" means an older build.
  */
 object BlobDownloadHelper {
 
@@ -70,6 +93,25 @@ object BlobDownloadHelper {
     const val JS_NAME = "MBBlobBridge"
 
     private const val CHUNK_SIZE = 1 * 1024 * 1024
+    private const val STREAM_BUFFER_SIZE = 64 * 1024
+
+    /**
+     * Hard ceiling on simultaneously in-flight blob/data downloads.
+     * Each holds one open OutputStream (and, pre-Q, one open FD); this
+     * bounds how much a single page -- malicious or merely buggy -- can
+     * make the browser hold open at once. Comfortably above anything a
+     * real multi-file "download all" interaction would trigger.
+     */
+    private const val MAX_CONCURRENT_DOWNLOADS = 16
+
+    /**
+     * If a started download's token never reaches begin()/deliverChunk
+     * .../deliverError within this long, it is assumed abandoned (page
+     * navigated away before the async reader resolved, the blob was
+     * revoked before the reader ran, the renderer crashed) and is swept
+     * so its destination is cleaned up instead of leaking indefinitely.
+     */
+    private const val PENDING_TIMEOUT_MS = 5 * 60_000L
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -139,10 +181,9 @@ object BlobDownloadHelper {
         var lastNotifPct: Int = -1
     }
 
-    private val lock = Any()
-
     // Token-keyed so a stale reader script from an abandoned download can
-    // never write its bytes into a newer download's stream.
+    // never write its bytes into a newer download's stream, and so
+    // unrelated concurrent downloads never interfere with each other.
     private val pendings =
         java.util.concurrent.ConcurrentHashMap<String, Pending>()
 
@@ -184,13 +225,10 @@ object BlobDownloadHelper {
         Log.i(TAG, "start url=" + blobUrl + " fallback=" + fileName + " mime=" + mimeType)
         if (blobUrl.isBlank()) return
 
-        // Abandon anything still in flight. Abandoned readers keep their
-        // token, so their late deliverChunk() calls hit a closed stream
-        // and fail cleanly instead of corrupting the new download.
-        synchronized(lock) {
-            val toDrop = pendings.values.toList()
-            pendings.clear()
-            for (p in toDrop) abandon(p)
+        if (pendings.size >= MAX_CONCURRENT_DOWNLOADS) {
+            Log.w(TAG, "refusing new blob download: " + pendings.size + " already in flight")
+            toast(activity, activity.getString(R.string.download_failed) + ": too-many-active")
+            return
         }
 
         val token = java.util.UUID.randomUUID().toString()
@@ -203,6 +241,19 @@ object BlobDownloadHelper {
             mime = mimeType?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
         )
         pendings[token] = p
+
+        // Watchdog: if this token never completes (page never calls
+        // begin/deliverChunk/deliverError), reclaim it instead of
+        // leaking an open destination forever. A download that is
+        // legitimately still transferring is unaffected -- this only
+        // fires if `token` is STILL mapped to this exact Pending when
+        // the timeout runs.
+        mainHandler.postDelayed({
+            if (pendings.remove(token, p)) {
+                Log.w(TAG, "blob download timed out, abandoning token=" + token)
+                abandon(p)
+            }
+        }, PENDING_TIMEOUT_MS)
 
         val js = buildReaderJs(blobUrl, token)
         try {
@@ -258,7 +309,7 @@ object BlobDownloadHelper {
 
         if (b64.isNotEmpty()) {
             try {
-                val bytes = Base64.decode(b64, Base64.DEFAULT)
+                val bytes = Base64.getDecoder().decode(b64)
                 var writeFailed = false
                 var writeError: String? = null
 
@@ -288,15 +339,13 @@ object BlobDownloadHelper {
                     return
                 }
 
-                // Throttle notification updates to 1% granularity.
-                if (p.totalBytes > 0L) {
-                    val pct = ((p.bytesWritten * 100L) / p.totalBytes).toInt()
-                    if (pct != p.lastNotifPct) {
-                        p.lastNotifPct = pct
-                        DownloadNotifications.progress(
-                            p.appContext, p.fileName, p.bytesWritten, p.totalBytes
-                        )
-                    }
+                // Throttle notification updates to roughly 1% granularity.
+                val pct = DownloadHandler.clampProgressPercent(p.bytesWritten, p.totalBytes)
+                if (pct >= 0 && pct != p.lastNotifPct) {
+                    p.lastNotifPct = pct
+                    DownloadNotifications.progress(
+                        p.appContext, p.fileName, p.bytesWritten, p.totalBytes
+                    )
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "chunk decode failed: " + t.message)
@@ -310,6 +359,24 @@ object BlobDownloadHelper {
         }
 
         if (isLast) {
+            // The Blob's own reported size is authoritative (unlike an
+            // HTTP Content-Length it is never "unknown"), so a mismatch
+            // here means bytes were lost somewhere between the page and
+            // disk -- a JS-bridge interruption or a partial chunk --
+            // and the file must NOT be reported as a successful download.
+            val truncated = p.totalBytes > 0L && p.bytesWritten != p.totalBytes
+            if (truncated) {
+                Log.w(TAG, "blob transfer truncated: got " + p.bytesWritten +
+                    " of " + p.totalBytes + " bytes")
+                p.failed = true
+                finalizeDownload(p, success = false)
+                pendings.remove(token, p)
+                DownloadNotifications.complete(p.appContext, p.fileName, success = false)
+                toastOnUi(p.appContext,
+                    p.appContext.getString(R.string.download_failed) + ": truncated")
+                return
+            }
+
             Log.i(TAG, "complete, bytes=" + p.bytesWritten)
             finalizeDownload(p, success = true)
             pendings.remove(token, p)
@@ -348,24 +415,31 @@ object BlobDownloadHelper {
         mimeType: String?
     ) {
         val app = activity.applicationContext
-        val parsed = parseDataUrl(dataUrl) ?: run {
+        val header = parseDataUrlHeader(dataUrl)
+        if (header == null) {
             toast(activity, activity.getString(R.string.download_failed) + ": data-parse")
             return
         }
-        val name = fileName.takeIf { it.isNotBlank() } ?: parsed.defaultName
-        val mime = mimeType?.takeIf { it.isNotBlank() } ?: parsed.mime
+        val name = fileName.takeIf { it.isNotBlank() } ?: header.defaultName
+        val mime = mimeType?.takeIf { it.isNotBlank() } ?: header.mime
 
-        DownloadNotifications.start(activity, name, parsed.bytes.size.toLong())
+        // Base64 expands the payload by ~4/3, so the decoded size is
+        // roughly 3/4 of the encoded payload length. This is only an
+        // estimate (padding/whitespace throw it off slightly) used for
+        // the progress bar, which is clamped to [0, 100] regardless.
+        val estimatedTotal = if (header.isBase64) {
+            (header.payload.length.toLong() * 3L) / 4L
+        } else {
+            header.payload.length.toLong()
+        }
+
+        DownloadNotifications.start(app, name, estimatedTotal)
 
         CoroutineScope(Dispatchers.IO).launch {
-            val result = writeAllAtOnce(app, name, mime, parsed.bytes)
-            val ok = result.first
-            val uri = result.second
+            val (ok, uri, bytesWritten) = writeDataUrlStreaming(app, name, mime, header, estimatedTotal)
             if (ok) {
                 uri?.let {
-                    LocalDownloadsStore.get(app).record(
-                        name, it, mime, parsed.bytes.size.toLong()
-                    )
+                    LocalDownloadsStore.get(app).record(name, it, mime, bytesWritten)
                 }
                 DownloadNotifications.complete(app, name, success = true)
                 toastOnUi(app, app.getString(R.string.download_saved, name))
@@ -420,16 +494,25 @@ object BlobDownloadHelper {
     }
 
     // ---------------------------------------------------------------------
-    // data: parsing
+    // data: parsing (pure / unit-testable -- see BlobDownloadHelperTest.kt)
     // ---------------------------------------------------------------------
 
-    private data class DataPayload(
+    internal data class DataUrlHeader(
         val mime: String,
-        val bytes: ByteArray,
+        val isBase64: Boolean,
+        val payload: String,
         val defaultName: String
     )
 
-    private fun parseDataUrl(url: String): DataPayload? {
+    /**
+     * Parse a data: URL's header (mime type, base64-ness) and split off
+     * its payload WITHOUT decoding any bytes. Decoding happens later,
+     * streamed straight to the destination in [writeDataUrlStreaming],
+     * so a large data: URL (e.g. a multi-megabyte canvas export) never
+     * needs a second, fully-materialised decoded ByteArray held in
+     * memory alongside the original encoded string.
+     */
+    internal fun parseDataUrlHeader(url: String): DataUrlHeader? {
         if (!url.startsWith("data:", ignoreCase = true)) return null
         val comma = url.indexOf(',')
         if (comma < 0) return null
@@ -443,20 +526,10 @@ object BlobDownloadHelper {
             ?: "application/octet-stream"
         val defaultName = "download_" + System.currentTimeMillis() + "." + mimeToExt(mime)
 
-        return try {
-            val bytes = if (isBase64) {
-                Base64.decode(payload, Base64.DEFAULT)
-            } else {
-                Uri.decode(payload).toByteArray(Charsets.UTF_8)
-            }
-            DataPayload(mime, bytes, defaultName)
-        } catch (t: Throwable) {
-            Log.w(TAG, "data: parse failed: " + t.message)
-            null
-        }
+        return DataUrlHeader(mime, isBase64, payload, defaultName)
     }
 
-    private fun mimeToExt(mime: String): String = when (mime.lowercase()) {
+    internal fun mimeToExt(mime: String): String = when (mime.lowercase()) {
         "image/png" -> "png"
         "image/jpeg", "image/jpg" -> "jpg"
         "image/gif" -> "gif"
@@ -472,8 +545,119 @@ object BlobDownloadHelper {
         else -> mime.substringAfterLast('/', "bin").take(8)
     }
 
+    /**
+     * Decode and write a data: URL's payload straight to the
+     * destination in bounded-size chunks, rather than decoding the
+     * entire payload into one ByteArray up front. For the base64 case
+     * this is a real memory-footprint win on large data URLs: the old
+     * implementation held the encoded string (from the WebView
+     * callback), then additionally allocated a fully decoded ByteArray
+     * of comparable size, before a single bulk write -- roughly 2x the
+     * payload size in extra heap at peak, on top of the page's own copy.
+     */
+    private fun writeDataUrlStreaming(
+        context: Context,
+        fileName: String,
+        mime: String,
+        header: DataUrlHeader,
+        estimatedTotal: Long
+    ): Triple<Boolean, String?, Long> {
+        var output: OutputStream? = null
+        var mediaUri: Uri? = null
+        var fileTarget: File? = null
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    val values = ContentValues().apply {
+                        put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                        put(MediaStore.Downloads.MIME_TYPE, mime)
+                        put(MediaStore.Downloads.IS_PENDING, 1)
+                    }
+                    val resolver = context.contentResolver
+                    val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    if (uri != null) {
+                        val os = resolver.openOutputStream(uri)
+                        if (os != null) {
+                            output = os
+                            mediaUri = uri
+                        } else {
+                            try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
+                        }
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "MediaStore threw: " + t.message)
+                }
+            }
+
+            if (output == null) {
+                val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                    ?: return Triple(false, null, 0L)
+                if (!dir.exists() && !dir.mkdirs()) return Triple(false, null, 0L)
+                // Uniquify on the app-specific-storage fallback path, the
+                // same way the blob path's openOutput() already does --
+                // without this, two data: URL downloads sharing a
+                // filename (or a download reusing an earlier file's
+                // name) silently truncated whatever was already there.
+                val f = DownloadHandler.uniqueFile(dir, fileName)
+                output = FileOutputStream(f)
+                fileTarget = f
+            }
+
+            val out = output
+            var bytesWritten = 0L
+            var lastPct = -1
+
+            if (header.isBase64) {
+                val src = ByteArrayInputStream(header.payload.toByteArray(Charsets.US_ASCII))
+                // The MIME decoder tolerates embedded whitespace/line
+                // breaks in the payload, matching how lenient the old
+                // android.util.Base64 decoder was for this input.
+                val decoded = Base64.getMimeDecoder().wrap(src)
+                val buffer = ByteArray(STREAM_BUFFER_SIZE)
+                while (true) {
+                    val n = decoded.read(buffer)
+                    if (n <= 0) break
+                    out.write(buffer, 0, n)
+                    bytesWritten += n
+                    val pct = DownloadHandler.clampProgressPercent(bytesWritten, estimatedTotal)
+                    if (pct >= 0 && pct != lastPct) {
+                        lastPct = pct
+                        DownloadNotifications.progress(context, fileName, bytesWritten, estimatedTotal)
+                    }
+                }
+            } else {
+                // Percent-encoded text payloads (data:text/plain,Hello)
+                // are practically always small -- unlike base64
+                // image/blob exports -- so a single decode is fine here.
+                val bytes = Uri.decode(header.payload).toByteArray(Charsets.UTF_8)
+                out.write(bytes)
+                bytesWritten = bytes.size.toLong()
+            }
+            out.flush()
+
+            if (mediaUri != null) {
+                val values = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+                context.contentResolver.update(mediaUri, values, null, null)
+                return Triple(true, mediaUri.toString(), bytesWritten)
+            }
+            if (fileTarget != null) {
+                return Triple(true, Uri.fromFile(fileTarget).toString(), bytesWritten)
+            }
+            return Triple(false, null, bytesWritten)
+        } catch (t: Throwable) {
+            Log.w(TAG, "data: write failed: " + t.message)
+            if (mediaUri != null) {
+                try { context.contentResolver.delete(mediaUri, null, null) } catch (_: Throwable) {}
+            }
+            fileTarget?.let { try { it.delete() } catch (_: Throwable) {} }
+            return Triple(false, null, 0L)
+        } finally {
+            try { output?.close() } catch (_: Throwable) {}
+        }
+    }
+
     // ---------------------------------------------------------------------
-    // Destination
+    // Destination (blob chunked path)
     // ---------------------------------------------------------------------
 
     private fun openOutput(p: Pending): String? {
@@ -567,71 +751,10 @@ object BlobDownloadHelper {
     }
 
     // ---------------------------------------------------------------------
-    // data: disk write
-    // ---------------------------------------------------------------------
-
-    private fun writeAllAtOnce(
-        context: Context, fileName: String, mime: String, bytes: ByteArray
-    ): Pair<Boolean, String?> = try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            writeViaMediaStore(context, fileName, mime, bytes)
-        } else {
-            writeViaFile(context, fileName, bytes)
-        }
-    } catch (t: Throwable) {
-        Log.w(TAG, "write failed: " + t.message)
-        Pair(false, null)
-    }
-
-    private fun writeViaMediaStore(
-        context: Context, fileName: String, mime: String, bytes: ByteArray
-    ): Pair<Boolean, String?> {
-        try {
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-                put(MediaStore.Downloads.MIME_TYPE, mime)
-                put(MediaStore.Downloads.IS_PENDING, 1)
-            }
-            val resolver = context.contentResolver
-            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-            if (uri != null) {
-                val out = resolver.openOutputStream(uri)
-                if (out != null) {
-                    out.use { it.write(bytes); it.flush() }
-                    values.clear()
-                    values.put(MediaStore.Downloads.IS_PENDING, 0)
-                    resolver.update(uri, values, null, null)
-                    return Pair(true, uri.toString())
-                }
-                try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "MediaStore write failed: " + t.message)
-        }
-        return writeViaFile(context, fileName, bytes)
-    }
-
-    private fun writeViaFile(
-        context: Context, fileName: String, bytes: ByteArray
-    ): Pair<Boolean, String?> {
-        return try {
-            val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                ?: return Pair(false, null)
-            if (!dir.exists() && !dir.mkdirs()) return Pair(false, null)
-            val f = File(dir, fileName)
-            FileOutputStream(f).use { it.write(bytes) }
-            Pair(true, Uri.fromFile(f).toString())
-        } catch (t: Throwable) {
-            Log.w(TAG, "file write failed: " + t.message)
-            Pair(false, null)
-        }
-    }
-
-    // ---------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------
 
-    private fun sanitize(name: String): String {
+    internal fun sanitize(name: String): String {
         var s = name.replace('/', '_').replace('\\', '_').trim().trimEnd('.')
         if (s.isBlank() || s == "." || s == "..") return ""
         if (s.length > 180) {

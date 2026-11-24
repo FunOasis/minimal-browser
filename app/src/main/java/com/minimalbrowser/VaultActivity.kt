@@ -49,7 +49,33 @@ class VaultActivity : AppCompatActivity() {
             override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
         })
 
+        // An earlier version left the vault silently "empty" forever
+        // when EncryptedSharedPreferences failed to initialize (e.g.
+        // after restoring the app's data onto a different device, where
+        // the Keystore-backed master key does not travel with the
+        // backup). Tell the user explicitly instead, and stop them
+        // typing a password that would silently fail to save.
+        if (!store.isAvailable) {
+            showDegradedModeNotice()
+        }
+
         refresh("")
+    }
+
+    private fun showDegradedModeNotice() {
+        binding.btnAdd.isEnabled = false
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Password vault unavailable")
+            .setMessage(
+                "The encrypted password vault could not be set up on this " +
+                    "device, so saved passwords aren't available right now and " +
+                    "new ones can't be stored. This can happen after restoring " +
+                    "the app's data onto a different device, or after certain " +
+                    "system updates. A one-time automatic reset was attempted; " +
+                    "if this keeps happening, try restarting the device."
+            )
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     private fun refresh(query: String) {
@@ -112,6 +138,11 @@ class VaultActivity : AppCompatActivity() {
      * inputType resets the selection on some IMEs.
      */
     private fun showAddDialog(existing: SecureCredentialStore.Credential? = null) {
+        if (!store.isAvailable) {
+            showDegradedModeNotice()
+            return
+        }
+
         val isEdit = existing != null
 
         val container = LinearLayout(this).apply {

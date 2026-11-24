@@ -25,17 +25,29 @@ package com.minimalbrowser
  *   com.example.ads        <- hit, blocked
  *   com.example.ads.x
  *
- * The suffix walk is the same trick the trie used, just expressed in
- * flat string prefixes rather than node traversal.
- *
  * Zero-allocation hot path
  * ------------------------
  * matches() is called from shouldInterceptRequest for every
- * non-mainframe request, i.e. dozens of times per page. The previous
- * implementation built the reversed host then took a substring per
- * candidate suffix. This version hashes the reversed string in place,
- * one character at a time, checking a candidate at each dot. Zero
- * intermediate String allocations.
+ * non-mainframe request, i.e. dozens of times per page. An earlier
+ * version of this class called a reverseHost() helper that built the
+ * reversed string with host.split('.') (allocates a List<String> plus
+ * one String per label) and a StringBuilder (allocates the builder,
+ * its backing char array, and the final String) before the hash walk
+ * ever started -- so despite the "zero-allocation" doc comment, every
+ * single sub-resource request paid for a List, N label Strings, a
+ * StringBuilder, and a final String.
+ *
+ * This version never builds the reversed string. It walks the ORIGINAL
+ * host from right to left, one label at a time, using plain index
+ * arithmetic to find each label's [start, end) bounds. Within a label
+ * the characters are folded into the running FNV-1a hash in their
+ * normal left-to-right order; a '.' is folded in between labels.
+ * Because FNV-1a is just a left-to-right scan, hashing "com", then
+ * ".example", then ".ads", then ".x" in that order produces exactly the
+ * same hash sequence as hashing the materialised string
+ * "com.example.ads.x" -- so matching semantics are unchanged, while the
+ * only allocation anywhere in matches() is now zero: no List, no
+ * StringBuilder, no intermediate String.
  *
  * Collision risk: FNV-1a is 64-bit. Expected collisions among 150k
  * items are on the order of 1 in 10^9. Two unrelated hosts colliding
@@ -53,30 +65,57 @@ class HostSet private constructor(private val hashes: LongArray) {
      *
      * The host must already be lowercase. Called from AdBlocker.check()
      * after extractHost() has normalised the URL.
+     *
+     * No allocation: labels are located with index arithmetic over the
+     * original [host] string and hashed in place. See the class doc for
+     * why this produces identical results to hashing a materialised
+     * reversed string.
      */
     fun matches(host: String): Boolean {
-        if (hashes.isEmpty() || host.isEmpty()) return false
-        val reversed = reverseHost(host)
-        val n = reversed.length
+        val n = host.length
+        if (hashes.isEmpty() || n == 0) return false
+
         var h = FNV_OFFSET
-        var i = 0
-        while (i < n) {
-            val c = reversed[i]
-            if (c == '.') {
-                // End of a label: the prefix hashed so far is one
-                // candidate suffix. Check it, then fold the dot into
-                // the running hash and continue.
-                if (containsHash(h)) return true
-                h = h xor '.'.code.toLong()
-                h *= FNV_PRIME
-            } else {
-                h = h xor c.code.toLong()
+        var labelEnd = n   // exclusive end of the label currently being scanned
+        var firstLabel = true
+
+        while (labelEnd > 0) {
+            // Find the start of the right-most not-yet-processed label by
+            // scanning backward for a '.' (or the start of the string).
+            var labelStart = labelEnd
+            while (labelStart > 0 && host[labelStart - 1] != '.') {
+                labelStart--
+            }
+
+            if (!firstLabel) {
+                // Fold in the separator between this label and the one
+                // already hashed to its right -- equivalent to the '.'
+                // that would sit between them in a reversed string.
+                h = h xor DOT_CODE
                 h *= FNV_PRIME
             }
-            i++
+
+            var i = labelStart
+            while (i < labelEnd) {
+                h = h xor host[i].code.toLong()
+                h *= FNV_PRIME
+                i++
+            }
+
+            // The hash so far equals fnv1a64() of the reversed-host
+            // prefix built from every label walked so far -- one
+            // candidate suffix. Check it exactly where the old
+            // char-by-char walk checked its reversed string.
+            if (containsHash(h)) return true
+
+            firstLabel = false
+            // Move past the '.' that preceded this label (if any) to
+            // continue with the next label to the left. labelStart == 0
+            // means we just processed the left-most label, so -1 ends
+            // the loop.
+            labelEnd = labelStart - 1
         }
-        // Final candidate: the whole reversed string.
-        return containsHash(h)
+        return false
     }
 
     private fun containsHash(h: Long): Boolean = hashes.binarySearch(h) >= 0
@@ -86,14 +125,16 @@ class HostSet private constructor(private val hashes: LongArray) {
 
         /**
          * Build a HostSet from a collection of lowercase hostnames.
-         * Duplicate hashes are collapsed in place after sorting.
+         * Duplicate hashes are collapsed in place after sorting. This
+         * runs once per blocklist (re)load, not on the request hot
+         * path, so reverseHost()'s allocations here are fine.
          */
         fun from(hosts: Collection<String>): HostSet {
             if (hosts.isEmpty()) return EMPTY
             val raw = LongArray(hosts.size)
             var i = 0
-            for (h in hosts) {
-                raw[i++] = fnv1a64(reverseHost(h))
+            for (host in hosts) {
+                raw[i++] = fnv1a64(reverseHost(host))
             }
             raw.sort()
             var write = 0
@@ -125,6 +166,9 @@ private const val FNV_OFFSET = -3750763034362895579L
  */
 private const val FNV_PRIME = 1099511628211L
 
+/** '.' as a Long code point, folded into the hash between labels. */
+private const val DOT_CODE = '.'.code.toLong()
+
 private fun fnv1a64(s: String): Long {
     var h = FNV_OFFSET
     for (i in s.indices) {
@@ -140,6 +184,10 @@ private fun fnv1a64(s: String): Long {
  * inputs (empty labels, trailing dot) produce something odd but never
  * crash -- the result simply will not match anything in the set, which
  * is the correct behaviour for garbage input.
+ *
+ * Only used by from() when a blocklist is (re)built -- not on the
+ * request hot path. See HostSet.matches() for the allocation-free
+ * equivalent used there.
  */
 private fun reverseHost(host: String): String {
     if (host.isEmpty()) return host

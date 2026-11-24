@@ -236,7 +236,7 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
                 showExitConfirm()
             }
         })
-        
+
         val savedUrls = savedInstanceState?.getStringArrayList(KEY_TAB_URLS)
         val savedActive = savedInstanceState?.getInt(KEY_ACTIVE_TAB, 0) ?: 0
         // Per-tab JavaScript toggle state, so a config-change recreation
@@ -263,37 +263,35 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
 
         val disk = if (savedUrls.isNullOrEmpty()) SessionStore.load(this) else null
 
-        val restoreUrls: List<String>? = when {
-            !savedUrls.isNullOrEmpty() -> savedUrls
-            disk != null -> disk.urls
-            else -> null
-        }
-        val restoreActive: Int = when {
-            !savedUrls.isNullOrEmpty() -> savedActive
-            disk != null -> disk.activeIndex
-            else -> 0
-        }
-
-        if (restoreUrls != null) {
-            tabManager.restore(restoreUrls, restoreActive, savedJs)
-            // Session is preserved. Shortcut loads into the active tab;
-            // an external link opens as a new tab so the restored
-            // session is not clobbered. This mirrors Chrome's
-            // behaviour when an external app hands it a URL.
-            when {
-                !shortcutUrl.isNullOrBlank() -> {
-                    tabManager.loadActive(shortcutUrl)
-                }
-                externalUrl != null -> {
-                    tabManager.create(url = externalUrl, makeActive = true)
+        // What to do with the tab list on this launch -- restore a
+        // saved/on-disk session, or open exactly one tab -- is decided
+        // by a pure, independently unit-tested function (LaunchPlan.kt)
+        // rather than inline here, so every restore/shortcut/external-
+        // URL combination has test coverage. See LaunchPlanTest.kt.
+        val plan = resolveLaunchPlan(
+            savedUrls = savedUrls,
+            savedActive = savedActive,
+            savedJs = savedJs,
+            diskUrls = disk?.urls,
+            diskActive = disk?.activeIndex ?: 0,
+            shortcutUrl = shortcutUrl,
+            externalUrl = externalUrl
+        )
+        when (plan) {
+            is LaunchPlan.Restore -> {
+                tabManager.restore(plan.urls, plan.activeIndex, plan.jsFlags)
+                when (val post = plan.postAction) {
+                    is PostRestoreAction.LoadShortcut ->
+                        tabManager.loadActive(post.url)
+                    is PostRestoreAction.OpenExternalTab ->
+                        tabManager.create(url = post.url, makeActive = true)
+                    PostRestoreAction.None -> {}
                 }
             }
-        } else if (!shortcutUrl.isNullOrBlank()) {
-            tabManager.create(url = shortcutUrl)
-        } else if (externalUrl != null) {
-            tabManager.create(url = externalUrl)
-        } else {
-            tabManager.create()
+            is LaunchPlan.CreateSingle -> {
+                if (plan.url != null) tabManager.create(url = plan.url)
+                else tabManager.create()
+            }
         }
 
         updateJsBadge()
@@ -326,6 +324,12 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         if (exiting || isFinishing) return
+        // Every tab's Tab.url is refreshed from its live WebView right
+        // before it is read below, so a tab that is mid-navigation (or
+        // simply has not fired its next progress/title callback yet)
+        // cannot leave a stale URL in the snapshot a config change or
+        // process death restores from. See TabManager.syncAllTabUrls().
+        tabManager.syncAllTabUrls()
         val tabs = tabManager.tabs
         if (tabs.isEmpty()) return
         val urls = ArrayList<String>(tabs.size)
@@ -343,6 +347,11 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
     override fun onStop() {
         super.onStop()
         if (exiting || isFinishing) return
+        // Same reasoning as onSaveInstanceState above: this is the
+        // on-disk snapshot used to restore after process death, reboot,
+        // or swipe-from-recents, so it is just as important that every
+        // tab's URL is current, not just the active one.
+        tabManager.syncAllTabUrls()
         val tabs = tabManager.tabs
         if (tabs.isEmpty()) return
         val urls = ArrayList<String>(tabs.size)
@@ -390,7 +399,14 @@ class MainActivity : AppCompatActivity(), BrowserUiListener {
         super.onTrimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
             tabManager.trimAllCaches()
-            tabManager.freezeIdleTabs(isBackgrounded = isBackgrounded)
+            // freezeIdleTabs() can destroy WebViews here just as it does
+            // from the periodic freezeTick and from onPause() -- both of
+            // which already refresh the tab badge afterward. This call
+            // was the one path that could silently change how many tabs
+            // are actually live without the badge (and the JS/block-count
+            // badges updateTabBadge() also refreshes) ever being told.
+            val frozen = tabManager.freezeIdleTabs(isBackgrounded = isBackgrounded)
+            if (frozen > 0) updateTabBadge()
         }
     }
 

@@ -193,6 +193,18 @@ class VaultPillController(
             .setTitle(activity.getString(R.string.vault_save_title))
             .setMessage(activity.getString(R.string.vault_save_message, host, username))
             .setPositiveButton(R.string.vault_save_action) { _, _ ->
+                // An earlier version always showed "Saved" here, even
+                // when the encrypted vault had failed to initialize and
+                // store.save() was a silent no-op -- the credential was
+                // quietly dropped while the user believed it was kept.
+                if (!store.isAvailable) {
+                    Toast.makeText(
+                        activity,
+                        "Password vault unavailable - not saved",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@setPositiveButton
+                }
                 store.save(host, username, password)
                 Toast.makeText(
                     activity, R.string.vault_save_saved, Toast.LENGTH_SHORT

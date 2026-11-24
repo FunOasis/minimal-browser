@@ -19,7 +19,6 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.webkit.WebViewDatabase
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
@@ -645,6 +644,11 @@ private fun collapseFailedResource(view: WebView, failedUrl: String) {
      * browser. This mirrors what every mainstream browser does: check for
      * credentials saved from a previous visit to this host+realm and
      * retry them silently; otherwise prompt.
+     *
+     * Credentials are stored via SecureCredentialStore (AES256-GCM
+     * encrypted, Keystore-backed) rather than the deprecated
+     * android.webkit.WebViewDatabase, which is both marked deprecated by
+     * the platform and, unlike this store, not encrypted at rest.
      */
     override fun onReceivedHttpAuthRequest(
         view: WebView?,
@@ -659,16 +663,13 @@ private fun collapseFailedResource(view: WebView, failedUrl: String) {
         val savedRealm = realm.orEmpty()
 
         val stored = try {
-            @Suppress("DEPRECATION")
-            WebViewDatabase.getInstance(appContext)
-                .getHttpAuthUsernamePassword(host, savedRealm)
+            SecureCredentialStore.get(appContext).httpAuthFor(host, savedRealm)
         } catch (t: Throwable) {
             Log.w(TAG, "HTTP auth credential lookup failed: " + t.message)
             null
         }
-        val storedUser = stored?.getOrNull(0)
-        if (!storedUser.isNullOrEmpty()) {
-            handler.proceed(storedUser, stored.getOrNull(1).orEmpty())
+        if (stored != null && stored.username.isNotEmpty()) {
+            handler.proceed(stored.username, stored.password)
             return
         }
 
@@ -725,9 +726,8 @@ private fun collapseFailedResource(view: WebView, failedUrl: String) {
                     val user = userField.text?.toString().orEmpty()
                     val pass = passField.text?.toString().orEmpty()
                     try {
-                        @Suppress("DEPRECATION")
-                        WebViewDatabase.getInstance(appContext)
-                            .setHttpAuthUsernamePassword(host, realm, user, pass)
+                        SecureCredentialStore.get(appContext)
+                            .saveHttpAuth(host, realm, user, pass)
                     } catch (t: Throwable) {
                         Log.w(TAG, "Could not save HTTP auth credentials: " + t.message)
                     }

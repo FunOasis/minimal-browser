@@ -240,20 +240,55 @@ class TabManager(
         getActiveWebView()?.reload()
     }
 
-    fun freezeIdleTabs(isBackgrounded: Boolean): Int {
-        val minutes = if (isBackgrounded) prefs.freezeIdleBackgroundMinutes
-                      else prefs.freezeIdleForegroundMinutes
-        if (minutes <= 0) return 0
-        val threshold = minutes * 60_000L
+    /**
+     * Pull the live WebView.url into Tab.url for EVERY tab that
+     * currently has one -- not just the active tab.
+     *
+     * Tab.url is otherwise only updated opportunistically: on
+     * onProgressChanged/onReceivedTitle callbacks for whichever tab they
+     * fire for, and in syncActiveUi() for the active tab alone. Freezing
+     * and destroying a tab already update it explicitly right before
+     * tearing the WebView down, but a tab that is simply mid-navigation,
+     * or whose last progress/title callback has not fired yet, can have
+     * a Tab.url that lags behind WebView.url at any instant in between.
+     * If the process is killed or a configuration change recreates the
+     * Activity in that window, whatever code reads Tab.url next would
+     * persist the stale value.
+     *
+     * Call this immediately before building any snapshot of the tab
+     * list (MainActivity.onSaveInstanceState, onStop) so the snapshot
+     * always reflects what each WebView itself currently reports -- the
+     * one source of truth that cannot be stale by construction.
+     */
+    fun syncAllTabUrls() {
+        for (tab in _tabs) {
+            val live = tab.webView?.url
+            if (!live.isNullOrBlank()) tab.url = live
+        }
+    }
 
+    /**
+     * Freeze every tab that has been idle past its configured threshold,
+     * tearing down its WebView to free memory while keeping enough state
+     * (Tab.url, title, favicon) to reload it later. Returns how many
+     * tabs were frozen so the caller can refresh anything (like the tab
+     * count badge) that depends on how many WebViews are currently live.
+     */
+    fun freezeIdleTabs(isBackgrounded: Boolean): Int {
         val now = System.currentTimeMillis()
         var count = 0
         for ((i, tab) in _tabs.withIndex()) {
             if (tab.frozen) continue
             if (tab.webView == null) continue
-            if (i == activeIndex && !isBackgrounded) continue
-            val idle = now - tab.lastUsedAt
-            if (idle < threshold) continue
+            val freeze = shouldFreezeTab(
+                isActive = i == activeIndex,
+                isBackgrounded = isBackgrounded,
+                lastUsedAt = tab.lastUsedAt,
+                now = now,
+                freezeIdleForegroundMinutes = prefs.freezeIdleForegroundMinutes,
+                freezeIdleBackgroundMinutes = prefs.freezeIdleBackgroundMinutes
+            )
+            if (!freeze) continue
             freezeTab(i)
             count++
         }
@@ -632,4 +667,28 @@ class TabManager(
             }
         }
     }
+}
+
+/**
+ * Pure decision logic for [TabManager.freezeIdleTabs]: should the tab
+ * described by these inputs be frozen right now? Extracted to a
+ * top-level internal function (no Android dependency) so the threshold
+ * arithmetic is directly unit-testable -- see TabFreezeTest.kt.
+ */
+internal fun shouldFreezeTab(
+    isActive: Boolean,
+    isBackgrounded: Boolean,
+    lastUsedAt: Long,
+    now: Long,
+    freezeIdleForegroundMinutes: Int,
+    freezeIdleBackgroundMinutes: Int
+): Boolean {
+    val minutes = if (isBackgrounded) freezeIdleBackgroundMinutes else freezeIdleForegroundMinutes
+    if (minutes <= 0) return false
+    // The active tab is never frozen out from under the user while the
+    // app is in the foreground; once backgrounded, even the active tab
+    // is eligible (it is, by definition, not visible to anyone).
+    if (isActive && !isBackgrounded) return false
+    val idle = now - lastUsedAt
+    return idle >= minutes * 60_000L
 }
