@@ -25,6 +25,21 @@
 //   Semantic tags like 0.0.1 do not satisfy that on their own, but the run
 //   number always does. versionName is what the user sees in Settings > Apps;
 //   versionCode is what the OS compares when installing.
+//
+// SDK / toolchain bump (this patch):
+//   Google Play requires new app updates to target Android 16 (API 36) as
+//   of August 31 2026 -- see
+//   https://support.google.com/googleplay/android-developer/answer/11926878
+//   compileSdk/targetSdk are bumped to 36 accordingly, which in turn
+//   requires an AGP release that supports compileSdk 36 (AGP 9.2.x
+//   confirms support up to API 37 and requires Gradle >= 9.4.1; see the
+//   root build.gradle and the CI workflow, both updated alongside this
+//   file). THIS is the single highest-risk change in this patch: it is an
+//   AGP major-version jump (8.2.2 -> 9.2.x) that could not be build-
+//   verified in the environment this patch was produced in (no network,
+//   no Android SDK/Gradle available there). Build and smoke-test this on
+//   a branch before merging; see CHANGES.md for the full reasoning and a
+//   lower-risk incremental alternative (8.2.2 -> 8.7+ -> 9.2.x).
 // =============================================================================
 plugins {
     id 'com.android.application'
@@ -80,17 +95,25 @@ logger.lifecycle(hasReleaseKeystore
 
 android {
     namespace 'com.minimalbrowser'
-    compileSdk 34
+    compileSdk 36
 
     defaultConfig {
         applicationId "com.minimalbrowser"
         minSdk 26
-        targetSdk 34
+        targetSdk 36
         versionCode computedVersionCode
         versionName computedVersionName
 
         ndk {
-            abiFilters "arm64-v8a"
+            // arm64-v8a covers virtually all real devices sold since
+            // ~2017, but excluded two real populations: armeabi-v7a
+            // (older 32-bit ARM phones/tablets still in use, and some
+            // budget devices still shipping today) and x86_64 (desktop
+            // Chromebooks and the default Android Studio emulator
+            // ABI on Intel/AMD hosts). Plain 32-bit x86 is deliberately
+            // left out -- it is effectively extinct on real hardware
+            // and Google Play no longer expects it.
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
         }
     }
 
@@ -158,6 +181,30 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
     implementation 'androidx.work:work-runtime-ktx:2.9.1'
     implementation 'androidx.security:security-crypto:1.1.0'
-    testImplementation 'junit:junit:4.13.2'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+
+    // Everything added in this patch (HostSetTest, DownloadFilenameTest,
+    // RedirectPolicyTest, BlobDownloadHelperTest, SecureCredentialStoreKeyTest,
+    // TabFreezeTest, LaunchPlanTest) is plain JUnit against pure, Android-
+    // free functions -- deliberately, so it needed no new test dependency
+    // and could be produced with confidence without a live build to verify
+    // against. junit stays the only test dependency for that reason.
+    testImplementation 'junit:junit:4.13.2'
 }
+
+// -----------------------------------------------------------------------------
+// NOT done in this patch, left for a follow-up with a live build to verify
+// against (see CHANGES.md):
+//   - A true Robolectric/androidx.test-based suite for Activity/WebView-
+//     level integration (session restore through a real SharedPreferences-
+//     backed SessionStore, EncryptedSharedPreferences round-tripping under
+//     Robolectric's Keystore shadow, Intent dispatch through onNewIntent).
+//     The decision logic those would exercise is now covered by the pure
+//     unit tests above; the remaining gap is wiring, not logic.
+//   - A full dependency-version audit (appcompat/material/constraintlayout/
+//     swiperefreshlayout/webkit/coroutines/work-runtime-ktx/lifecycle-
+//     runtime-ktx were left at their existing pins deliberately, rather
+//     than guessed at without a build to confirm compatibility). Run
+//     Android Studio's Upgrade Assistant or the Gradle Versions plugin
+//     once this builds.
+// -----------------------------------------------------------------------------
