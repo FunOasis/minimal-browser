@@ -1,18 +1,24 @@
-// AGP and Kotlin bumped alongside app/build.gradle's compileSdk/targetSdk
-// 36 move -- AGP 9.2.x is the release line that confirms support up to API
-// 37 and is the line Google's own tooling defaults to for compileSdk 36 as
-// of late 2026. This requires Gradle >= 9.4.1 (see the CI workflow) and is
-// a major-version jump from 8.2.2 that could not be build-verified in the
-// environment this patch was produced in. See CHANGES.md before merging.
+// SDK / toolchain note:
+//   compileSdk/targetSdk 36 (see app/build.gradle) only requires an AGP
+//   release that supports API level 36. AGP 8.13 already does -- Google's
+//   own compatibility table lists AGP 8.13 as supporting up to API level
+//   36.1, requiring Gradle 8.13 (min and default) and JDK 17. That means
+//   there is no need to jump to AGP 9.x for this.
 //
-// NOTE: 9.4.1 is a *Gradle* version, not an AGP version -- there is no
-// AGP release numbered 9.4.1. AGP's own version line is 9.2.x (9.2.0,
-// with a 9.2.1 patch release fixing a ClassNotFoundException regression
-// in 9.2.0). Gradle 9.4.1 is what AGP 9.2.x *requires* as its minimum
-// Gradle version (see the CI workflow's "Set up Gradle" step) -- the two
-// numbers just happen to share a 9.4.1-looking value in different
-// places, which is what caused this to get crossed.
+//   AGP 9.x is deliberately NOT used here: starting at 9.0, AGP ships
+//   "built-in Kotlin" support and registers the `kotlin` Gradle extension
+//   itself. Applying `org.jetbrains.kotlin.android` (as app/build.gradle
+//   does, and as its classic `android.kotlinOptions{}` block requires)
+//   on top of that then fails with:
+//     Cannot add extension with name 'kotlin', as there is an extension
+//     already registered with that name.
+//   Avoiding that migration (removing the Kotlin plugin, moving
+//   kotlinOptions{} to a top-level kotlin.compilerOptions{} block) is a
+//   second, separate migration that this project does not need to take
+//   on just to reach compileSdk 36 -- AGP 8.13.2 reaches the same SDK
+//   target while keeping the project's existing, classic Kotlin plugin
+//   setup completely unchanged.
 plugins {
-    id 'com.android.application' version '9.2.1' apply false
-    id 'org.jetbrains.kotlin.android' version '2.3.21' apply false
+    id 'com.android.application' version '8.13.2' apply false
+    id 'org.jetbrains.kotlin.android' version '2.3.10' apply false
 }
