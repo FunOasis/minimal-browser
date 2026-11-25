@@ -4,7 +4,15 @@
 // of late 2026. This requires Gradle >= 9.4.1 (see the CI workflow) and is
 // a major-version jump from 8.2.2 that could not be build-verified in the
 // environment this patch was produced in. See CHANGES.md before merging.
+//
+// NOTE: 9.4.1 is a *Gradle* version, not an AGP version -- there is no
+// AGP release numbered 9.4.1. AGP's own version line is 9.2.x (9.2.0,
+// with a 9.2.1 patch release fixing a ClassNotFoundException regression
+// in 9.2.0). Gradle 9.4.1 is what AGP 9.2.x *requires* as its minimum
+// Gradle version (see the CI workflow's "Set up Gradle" step) -- the two
+// numbers just happen to share a 9.4.1-looking value in different
+// places, which is what caused this to get crossed.
 plugins {
-    id 'com.android.application' version '9.4.1' apply false
-    id 'org.jetbrains.kotlin.android' version '2.3.10' apply false
+    id 'com.android.application' version '9.2.1' apply false
+    id 'org.jetbrains.kotlin.android' version '2.3.21' apply false
 }
