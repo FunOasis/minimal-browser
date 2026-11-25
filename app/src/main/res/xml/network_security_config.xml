@@ -4,7 +4,7 @@
   let the user open ANY http(s) URL they type or tap, including plain
   http:// sites that still exist across the web. That is why cleartext
   stays permitted here rather than being locked down the way a typical
-  single-purpose app's manifest would be -- a browser that silently
+  single-purpose app's manifest would be — a browser that silently
   refused to load http:// pages would not be a browser, and this
   network security config governs the WebView's own navigation
   cleartext policy just as much as it governs DownloadHandler's and
@@ -22,9 +22,9 @@
   This file replaces the bare android:usesCleartextTraffic="true"
   manifest flag with the same effective policy expressed as an
   explicit, auditable configuration, so the decision has an obvious
-  place to live (and a place to narrow later -- e.g. a
+  place to live (and a place to narrow later — e.g. a
   <domain-config cleartextTrafficPermitted="false"> block for a
-  specific first-party endpoint, should one ever be added -- instead of
+  specific first-party endpoint, should one ever be added — instead of
   fighting a single global flag).
 -->
 <network-security-config>
