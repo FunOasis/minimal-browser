@@ -91,17 +91,36 @@ jobs:
           echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
 
+      # Bumped to 36 to match app/build.gradle's compileSdk/targetSdk 36.
+      # Installing platform 34 while compileSdk asks for 36 is exactly
+      # what produces "Failed to find target with hash string 'android-36'"
+      # during Gradle sync.
       - name: Accept licenses & install packages
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses > /dev/null || true
           sdkmanager --install \
             "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0"
+            "platforms;android-36" \
+            "build-tools;36.0.0"
 
-      - name: Set up Gradle
+      # No Gradle wrapper (gradlew / gradle/wrapper/...) is committed to
+      # this repo, so the build steps below call the system `gradle`
+      # command rather than ./gradlew. This step provisions that exact
+      # Gradle version and puts it on PATH -- gradle-version must be
+      # specified explicitly here precisely because there is no wrapper
+      # for setup-gradle to read a version from. 9.4.1 matches the
+      # minimum Gradle version AGP 9.2.x (see build.gradle) requires.
+      #
+      # If you'd rather use ./gradlew instead, generate and commit a
+      # real wrapper first (`gradle wrapper --gradle-version 9.4.1`
+      # from a machine with Gradle installed, then commit gradlew,
+      # gradlew.bat, and gradle/wrapper/*), and switch the two `gradle`
+      # calls below back to `./gradlew`.
+      - name: Set up Gradle 9.4.1
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.1'
 
       - name: Decode keystore (if present)
         id: keystore
@@ -125,11 +144,11 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew assembleRelease --stacktrace --no-daemon
+        run: gradle assembleRelease --stacktrace --no-daemon
 
       - name: Build debug APK (no keystore)
         if: steps.keystore.outputs.present != 'true'
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        run: gradle assembleDebug --stacktrace --no-daemon
 
       - name: Rename APKs
         run: |
