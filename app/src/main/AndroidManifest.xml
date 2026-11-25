@@ -11,7 +11,7 @@
          writes downloads to is app-specific external storage
          (Context.getExternalFilesDir(DIRECTORY_DOWNLOADS), used by both
          DownloadHandler and BlobDownloadHelper) or MediaStore.Downloads on
-         API 29+ -- neither has required this permission since well before
+         API 29+ — neither has required this permission since well before
          this app's minSdk of 26: writes to an app's own external-storage
          directory have not needed WRITE_EXTERNAL_STORAGE since API 19
          (KitKat). The declaration was dead weight carried for years, not
