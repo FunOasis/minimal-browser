@@ -30,20 +30,19 @@
 //   Google Play requires new app updates to target Android 16 (API 36) as
 //   of August 31 2026 -- see
 //   https://support.google.com/googleplay/android-developer/answer/11926878
-//   compileSdk/targetSdk are bumped to 36 accordingly, which in turn
-//   requires an AGP release that supports compileSdk 36 (AGP 9.2.x
-//   confirms support up to API 37 and requires Gradle >= 9.4.1; see the
-//   root build.gradle and the CI workflow, both updated alongside this
-//   file). THIS is the single highest-risk change in this patch: it is an
-//   AGP major-version jump (8.2.2 -> 9.2.x) that could not be build-
-//   verified in the environment this patch was produced in (no network,
-//   no Android SDK/Gradle available there). Build and smoke-test this on
-//   a branch before merging; see CHANGES.md for the full reasoning and a
-//   lower-risk incremental alternative (8.2.2 -> 8.7+ -> 9.2.x).
+//   compileSdk/targetSdk are bumped to 36 accordingly. AGP 8.13.2 already
+//   supports up to API level 36.1 (confirmed in Google's own compatibility
+//   table), so the project stays on the classic Kotlin plugin model below
+//   (org.jetbrains.kotlin.android + android.kotlinOptions{}) rather than
+//   AGP 9's "built-in Kotlin" support, which would additionally require
+//   removing that plugin and migrating kotlinOptions{} to a top-level
+//   kotlin.compilerOptions{} block -- a second migration this project does
+//   not need just to reach compileSdk 36. See the root build.gradle for the
+//   matching AGP/Kotlin plugin versions.
 // =============================================================================
 plugins {
     id 'com.android.application'
-    //id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.android'
 }
 
 // -----------------------------------------------------------------------------
