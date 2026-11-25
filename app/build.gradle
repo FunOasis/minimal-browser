@@ -112,7 +112,7 @@ android {
             // ABI on Intel/AMD hosts). Plain 32-bit x86 is deliberately
             // left out -- it is effectively extinct on real hardware
             // and Google Play no longer expects it.
-            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
+            abiFilters "arm64-v8a"
         }
     }
 
